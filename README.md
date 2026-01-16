@@ -1,3 +1,4 @@
+功能說明
 **步驟 1: 初始化與環境變數檢查**
 從 [acme.sh](http://acme.sh/) 的設定檔中讀取 **NS_IP, NS_USER, NS_PASS, USE_FULLCHAIN** 等設定。
 檢查 **CERT_PATH, CERT_KEY_PATH, CA_CERT_PATH** 等核心路徑是否存在，如果不存在則終止。
