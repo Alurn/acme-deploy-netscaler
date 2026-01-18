@@ -1,4 +1,37 @@
 # 功能說明
+
+## 使用 Wrapper 腳本 (推薦)
+
+本專案提供了一個強化的封裝腳本 `deploy_wrapper.sh`，可自動識別 ACME 客戶端 (Certbot 或 acme.sh) 並統一環境變數設定。
+
+### 1. 設定連線資訊
+編輯 `deploy_wrapper.sh`，在檔案中填入 NetScaler 的連線資訊：
+
+```bash
+# 設置 NetScaler 連線資訊
+export NS_IP="192.168.2.13"
+export NS_USER="nsroot"
+export NS_PASS="P@ssw0rd"
+```
+
+### 2. 在 Certbot 中使用
+在 renewing 憑證時指定 `--deploy-hook`：
+
+```bash
+certbot renew --deploy-hook /path/to/acme-deploy-netscaler/deploy_wrapper.sh
+```
+
+### 3. 在 acme.sh 中使用
+雖然 acme.sh 支援內建部署 Hook，但您也可以將此 Wrapper 當作外部 Hook 使用：
+
+```bash
+acme.sh --deploy -d example.com --deploy-hook "exec /path/to/acme-deploy-netscaler/deploy_wrapper.sh"
+```
+
+---
+
+## 腳本詳細邏輯 (Internal Logic)
+
 ## 步驟 1: 初始化與環境變數檢查
 從 [acme.sh](http://acme.sh/) 的設定檔中讀取 **NS_IP, NS_USER, NS_PASS, USE_FULLCHAIN** 等設定。
 檢查 **CERT_PATH, CERT_KEY_PATH, CA_CERT_PATH** 等核心路徑是否存在，如果不存在則終止。
