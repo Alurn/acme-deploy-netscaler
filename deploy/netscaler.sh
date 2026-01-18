@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # ==============================================================================
-# NetScaler Nitro API Deploy Hook (修正 Link 判定邏輯)
+# NetScaler Nitro API Deploy Hook
 # ==============================================================================
 
-# 自定義設定 (若環境變數未提供則讀取.Conf)
+# Custom settings (read from .Conf if environment variables are not provided)
 if type _getdeployconf >/dev/null 2>&1; then
   _getdeployconf NS_IP
   _getdeployconf NS_USER
@@ -14,19 +14,19 @@ if type _getdeployconf >/dev/null 2>&1; then
   _getdeployconf NS_DEL_OLD_CERTKEY
 fi
 
-# Certbot自定義設定 (若環境變數未提供則使用預設值)
+# Custom settings (use default values if environment variables are not provided)
 NS_IP="${NS_IP:-192.168.100.1}"
 NS_USER="${NS_USER:-nsroot}"
 NS_PASS="${NS_PASS:-nsroot}"
 CERT_FULLCHAIN_PATH="${CERT_FULLCHAIN_PATH:-}"
-USE_FULLCHAIN="${USE_FULLCHAIN:-0}"   #預設不使用FULLCHAIN
-NS_API_LOG="${NS_API_LOG:-0}"   #預設不紀錄API Log
-NS_DEL_OLD_CERTKEY="${NS_DEL_OLD_CERTKEY:-0}"   #預設不刪除舊憑證檔案
+USE_FULLCHAIN="${USE_FULLCHAIN:-0}"   # Default: do not use FULLCHAIN
+NS_API_LOG="${NS_API_LOG:-0}"   # Default: do not record API Log
+NS_DEL_OLD_CERTKEY="${NS_DEL_OLD_CERTKEY:-0}"   # Default: do not delete old certificate files
 
-# 憑證檔案加密密碼
+# Certificate file encryption password
 CERT_KEY_PASS="${CERT_KEY_PASS:-}"
 
-# 根據要求設定 Log 檔案路徑為當前目錄
+# Set Log file path to current directory as required
 NS_API_LOG_PATH="./ns_api.log"
 
 # Color codes
@@ -34,12 +34,12 @@ _NS_RED='\033[1;31m'
 _NS_ORANGE='\033[1;33m'
 _NS_NC='\033[0m'
 
-# 訊息輸出函數
+# Message output functions
 _ns_info() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 _ns_warn() { echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${_NS_ORANGE}Warning:${_NS_NC} $1"; }
 _ns_error() { echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ${_NS_RED}Error:${_NS_NC} $1"; exit 1; }
 
-# API 日誌紀錄函數
+# API log recording function
 _log_api_payload() {
   if [ "$NS_API_LOG" != "1" ]; then
     return
@@ -57,7 +57,7 @@ _log_api_payload() {
 }
 
 netscaler_deploy() {
-  # --- 步驟 1: 初始化與環境變數檢查 ---
+  # --- Step 1: Initialization and environment variable check ---
   if [ -z "$CERT_PATH" ] || [ -z "$CERT_KEY_PATH" ] || [ -z "$CA_CERT_PATH" ]; then
     _ns_info "Required acme.sh path variables are missing, skipping deployment."
     _ns_info "Values: CERT_PATH='$CERT_PATH', CERT_KEY_PATH='$CERT_KEY_PATH', CA_CERT_PATH='$CA_CERT_PATH', CERT_FULLCHAIN_PATH='$CERT_FULLCHAIN_PATH'"
@@ -68,9 +68,9 @@ netscaler_deploy() {
   _ns_info "acme.sh provided certificate path: CA_CERT_PATH='$CA_CERT_PATH'"
   _ns_info "acme.sh provided certificate path: CERT_FULLCHAIN_PATH='$CERT_FULLCHAIN_PATH'"
 
-  # --- 步驟 2: 確定憑證物件名稱 (CERT_NAME) ---
+  # --- Step 2: Determine certificate object name (CERT_NAME) ---
   if [ -z "$CERT_NAME" ]; then
-    # 使用正確的 OpenSSL 語法提取主體名稱
+    # Use OpenSSL syntax to extract subject name
     CERT_NAME=$(openssl x509 -in "$CERT_PATH" -noout -subject | sed -n 's/.*CN = //p' | cut -d'/' -f1 | tr -d '*')
     _ns_info "Automatically extracted Common Name (CERT_NAME) from server certificate: $CERT_NAME"
   fi
@@ -83,22 +83,22 @@ netscaler_deploy() {
   _tmp_dir="/tmp/acme_ns_$(date +%s)"
   mkdir -p "$_tmp_dir"
 
-  # --- 函數：通用 API 回應檢查 ---
+  # --- Function: Common API response check ---
   _check_api_response() {
     local _res=$1
     local _action_name=$2
     if [ -z "$_res" ]; then
       _ns_warn "$_action_name API returned empty response, possible timeout, attempting to continue..."
-      return 0   # 空回應可能是成功
-    # 修正：相容 JSON 中冒號後的空格 (例如 "errorcode": 0)，且增加判斷最後 3 個字是否為 200 或 201
+      return 0   # Empty response might indicate success
+    # Compatible with spaces after colon in JSON (e.g., "errorcode": 0), and check if the last 3 characters are 200 or 201
     elif echo "$_res" | grep -q '"errorcode": *0' || [[ "${_res: -3}" == "200" ]] || [[ "${_res: -3}" == "201" ]]; then
-	    return 0   # "errorcode": 0 或 HTTP 狀態碼為 200 或 201 代表成功
+	    return 0   # "errorcode": 0 or HTTP status code 200 or 201 indicates success
     else
       return 1
     fi
   }
 
-  # --- 函數：Nitro API 登入 ---
+  # --- Function: Nitro API Login ---
   _login_ns() {
     _ns_info "Logging into NetScaler to obtain Session..."
     _login_payload="{ \"login\": { \"username\": \"${NS_USER}\", \"password\": \"${NS_PASS}\" } }"
@@ -106,12 +106,12 @@ netscaler_deploy() {
       -d "$_login_payload" \
       "https://${NS_IP}/nitro/v1/config/login")
     
-    # 執行 Log 紀錄
+    # Execute Log recording
     _log_api_payload "login" "LOGIN_ATTEMPT" "$_res"
 
-    # 使用 _check_api_response 判斷成功或失敗
+    # Use _check_api_response to determine success or failure
     if _check_api_response "$_res" "Login"; then
-      # 針對 Log 顯示的空格進行正則優化提取 Token
+      # Optimize regex to extract Token handling spaces shown in Log
       _session_token=$(echo "$_res" | grep -oP '"sessionid":\s*"\K[^"]+')
       
       if [ -z "$_session_token" ]; then
@@ -123,7 +123,7 @@ netscaler_deploy() {
     fi
   }
 
-  # --- 函數：Nitro API 登出 ---
+  # --- Function: Nitro API Logout ---
   _logout_ns() {
     _ns_info "Logging out from NetScaler Session..."
     _logout_payload="{ \"logout\": {} }"
@@ -136,7 +136,7 @@ netscaler_deploy() {
     _ns_info "Logout completed."
   }
 
-  # --- 函數：檢查 NetScaler 版本並設定 API 參數 ---
+  # --- Function: Check NetScaler version and set API parameters ---
   _check_ns_version_and_set_param() {
     _ns_info "Checking NetScaler firmware version..."
     local _res
@@ -192,20 +192,20 @@ netscaler_deploy() {
     fi
   }
 
-  # --- 步驟 3: 登入 NetScaler 並取得 Session Token ---
+  # --- Step 3: Login to NetScaler and obtain Session Token ---
   _login_ns
 
-  # --- 步驟 4: 偵測 NetScaler 韌體版本 ---
+  # --- Step 4: Detect NetScaler firmware version ---
   _delete_certfile_param=""
   _check_ns_version_and_set_param
 
-  # 狀態紀錄變數
+  # Status recording variables
   _needs_link_cert=false
   _ca_added=false
   _config_changed=false
   _target_ca_certname=""
 
-  # --- 函數：API 上傳檔案 ---
+  # --- Function: API file upload ---
   _upload_to_ns() {
     local _local_f=$1; local _remote_f=$2
     [ ! -f "$_local_f" ] && _ns_error "Local source file not found: $_local_f"
@@ -234,7 +234,7 @@ EOF
     _ns_info "File $_remote_f upload completed."
   }
 
-  # --- 函數：刪除 NetScaler 檔案 ---
+  # --- Function: Delete NetScaler file ---
   _delete_ns_file() {
     local _fname=$1
     [ -z "$_fname" ] && return
@@ -245,7 +245,7 @@ EOF
     _log_api_payload "systemfile (DELETE $_fname)" "DELETE" "$_del_res"
   }
 
-  # --- 函數：處理伺服器憑證 (Add/Update) ---
+  # --- Function: Process Server Certificate (Add/Update) ---
   # $1: local_cert_path
   # $2: remote_cert_filename
   # $3: is_bundle ("true" or "false")
@@ -280,7 +280,7 @@ EOF
       local _method="POST"
       local _action=""
       if [ "$_check_server_code" == "200" ]; then
-        # 如果啟用刪除舊檔案，則取得現有憑證資訊
+        # If deletion of old files is enabled, fetch current certificate info
         if [ "$NS_DEL_OLD_CERTKEY" = "1" ]; then
           _ns_info "NS_DEL_OLD_CERTKEY is enabled. Fetching current cert files for potential deletion."
           local _current_cert_details=$(curl -s -k --connect-timeout 10 -X GET \
@@ -332,7 +332,7 @@ EOF
         _log_api_payload "$_method Server bundle ($CERT_NAME $_action)" "$_payload_server" "$_res_server"
         if _check_api_response "$_res_server" "Server certificate bundle operation"; then
           _config_changed=true
-          # 如果啟用刪除，且舊檔案與新檔案不同，則執行刪除
+          # If deletion is enabled and old file differs from new file, execute deletion
           if [ "$NS_DEL_OLD_CERTKEY" = "1" ]; then
             if [ -n "$_old_cert_filename" ] && [ "$_old_cert_filename" != "$_remote_cert_filename" ]; then
                _delete_ns_file "$_old_cert_filename"
@@ -348,7 +348,7 @@ EOF
         _log_api_payload "$_method Server ($CERT_NAME $_action)" "$_payload_server" "$_res_server"
         if _check_api_response "$_res_server" "Server certificate operation"; then
           _config_changed=true
-          # 如果啟用刪除，且舊檔案與新檔案不同，則執行刪除
+          # If deletion is enabled and old file differs from new file, execute deletion
           if [ "$NS_DEL_OLD_CERTKEY" = "1" ]; then
             if [ -n "$_old_cert_filename" ] && [ "$_old_cert_filename" != "$_remote_cert_filename" ]; then
                _delete_ns_file "$_old_cert_filename"
@@ -364,7 +364,7 @@ EOF
     fi
   }
 
-  # --- 步驟 5: 取得 NetScaler 現有憑證列表 ---
+  # --- Step 5: Get existing NetScaler certificate list ---
   _ns_all_certs=$(curl -s -k --connect-timeout 10 -w "\n%{http_code}" -X GET \
     -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
     "https://${NS_IP}/nitro/v1/config/sslcertkey")
@@ -373,31 +373,31 @@ EOF
     _ns_error "Unable to connect to NetScaler or retrieve certificate list."
   fi
 
-  # --- 步驟 6: 選擇部署路徑 (Fullchain 或標準) ---
+  # --- Step 6: Choose deployment path (Fullchain or Standard) ---
   if [ "$USE_FULLCHAIN" = "1" ] && [ -n "$CERT_FULLCHAIN_PATH" ] && [ -f "$CERT_FULLCHAIN_PATH" ]; then
-    # --- 路徑 A: Fullchain (Bundle) 部署 ---
+    # --- Path A: Fullchain (Bundle) deployment ---
     _ns_info "Using bundle deployment method."
 
-    # --- 步驟 6A-1: 處理伺服器憑證包 ---
+    # --- Step 6A-1: Process server certificate bundle ---
     _r_cert_file="${CERT_NAME}_fullchain_${_date_suffix}.cer"
     _process_server_cert "$CERT_FULLCHAIN_PATH" "$_r_cert_file" "true"
     # CA and Link steps are skipped in this flow.
 
   else
-    # --- 路徑 B: 標準 (分離) 部署 ---
+    # --- Path B: Standard (Separate) deployment ---
     _ns_info "Using standard separate cert/ca deployment method."
     
-    # --- 步驟 6B-1: 處理 CA 中繼憑證 ---
+    # --- Step 6B-1: Process CA intermediate certificate ---
     _l_path="$CA_CERT_PATH"
     _l_serial=$(openssl x509 -in "$_l_path" -noout -serial | cut -d'=' -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')
     _ca_cn=$(openssl x509 -in "$_l_path" -noout -subject | sed -n 's/.*CN = //p' | cut -d'/' -f1 | tr -d '*' | tr ' ' '_')
     _base_ca_name="CA_${_ca_cn}"
     _r_ca_file="${_base_ca_name}_${_date_suffix}.cer"
 
-    # 修正：使用更精確的 grep 語法來尋找 serial，並處理 JSON 陣列
+    # Use more precise grep syntax to find serial, and handle JSON arrays
     if echo "$_ns_all_certs" | grep -qi "\"serial\": *\"$_l_serial\""; then
       _ns_info "CA [$_base_ca_name] serial matches, skipping upload."
-      # 修正：從包含 serial 的 JSON 物件中提取 certkey 名稱，並確保只取第一個結果
+      # Extract certkey name from JSON object containing serial, ensuring only the first result is taken
       _target_ca_certname=$(echo "$_ns_all_certs" | sed 's/},{/}\n{/g' | grep -i "\"serial\": *\"$_l_serial\"" | sed -n 's/.*"certkey": *"\([^"]*\)".*/\1/p' | head -n 1)
       _ns_info "Found existing CA object name: [$_target_ca_certname]"
     else
@@ -433,12 +433,12 @@ EOF
       fi
     fi
 
-    # --- 步驟 6B-2: 處理伺服器憑證 ---
+    # --- Step 6B-2: Process server certificate ---
     _r_cert_file="${CERT_NAME}_${_date_suffix}.cer"
     _process_server_cert "$CERT_PATH" "$_r_cert_file" "false"
 
-    # --- 步驟 6B-3: 連結憑證鏈 (Link) ---
-    # 修正判斷邏輯：確保變數比較嚴謹，並在日誌記錄判斷結果
+    # --- Step 6B-3: Link certificate chain ---
+    # Ensure variable comparison is strict, and log the result
     if { [ "$_needs_link_cert" = "true" ] || [ "$_ca_added" = "true" ]; } && [ -n "$_target_ca_certname" ]; then
       _ns_info "Linking certificate ($CERT_NAME -> $_target_ca_certname)..."
       _payload_link="{ \"sslcertkey\": { \"certkey\": \"${CERT_NAME}\", \"linkcertkeyname\": \"$_target_ca_certname\" } }"
@@ -458,9 +458,9 @@ EOF
     fi
   fi
 
-  # --- 步驟 7: 儲存 NetScaler 設定 ---
+  # --- Step 7: Save NetScaler configuration ---
   if [ "$_config_changed" = "true" ]; then
-    # 儲存部署設定 (若 acme.sh 支援)
+    # Save deployment settings (if supported by acme.sh)
     if type _savedeployconf >/dev/null 2>&1; then
       _savedeployconf NS_IP "$NS_IP"
       _savedeployconf NS_USER "$NS_USER"
@@ -482,7 +482,7 @@ EOF
     _ns_info "No configuration changes detected, skipping save action."
   fi
 
-  # --- 步驟 8: 登出並清理 ---
+  # --- Step 8: Logout and cleanup ---
   _logout_ns
 
   rm -rf "$_tmp_dir"
@@ -490,6 +490,5 @@ EOF
 }
 
 
-# --- Certbot請取消註解 ---
+# Define a function with the same name as the filename, format hook_name_deploy(), acme.sh will call it automatically
 #netscaler_deploy
-# 定義一個與檔名相同的函數，格式為 hook_name_deploy()，acme.sh 會自動呼叫它
