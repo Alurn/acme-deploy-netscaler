@@ -27,7 +27,7 @@ certbot renew --deploy-hook /path/to/acme-deploy-netscaler/deploy_wrapper.sh
 1. **安裝 Hook**:
    將 `deploy/netscaler.sh` 複製到 acme.sh 的 `deploy` 目錄下：
    ```bash
-   ln -s /path/to/acme-deploy-netscaler/deploy/netscaler.sh ~/.acme.sh/deploy/netscaler.sh
+   cp /path/to/acme-deploy-netscaler/deploy/netscaler.sh ~/.acme.sh/deploy/netscaler.sh
    ```
 
 2. **執行部署**:
