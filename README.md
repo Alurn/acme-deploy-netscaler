@@ -22,7 +22,9 @@ certbot renew --deploy-hook /path/to/acme-deploy-netscaler/deploy_wrapper.sh
 ```
 
 ### 3. 在 acme.sh 中使用
-雖然 acme.sh 支援內建部署 Hook，但您也可以將此 Wrapper 當作外部 Hook 使用：
+acme.sh 提供兩種方式整合本專案的腳本：
+
+**方式 A：使用內建模組 (推薦)**
 
 1. **安裝 Hook**:
    將 `deploy/netscaler.sh` 複製到 acme.sh 的 `deploy` 目錄下：
@@ -36,6 +38,22 @@ certbot renew --deploy-hook /path/to/acme-deploy-netscaler/deploy_wrapper.sh
    acme.sh --deploy -d example.com --deploy-hook netscaler
    ```
    *(第一次執行後，acme.sh 會記住設定，未來 renew 時會自動觸發)*
+
+**方式 B：使用外部腳本**
+
+如果您不想將腳本複製到 acme.sh 目錄，也可以直接使用 `deploy_wrapper.sh` 作為外部部署鉤子：
+
+```bash
+acme.sh --issue -d example.com --renew-hook "/path/to/acme-deploy-netscaler/deploy_wrapper.sh"
+```
+
+或者在已經取得憑證後執行部署：
+
+```bash
+acme.sh --deploy -d example.com --deploy-hook "/path/to/acme-deploy-netscaler/deploy_wrapper.sh"
+```
+
+> **提示**: 使用外部腳本時，`deploy_wrapper.sh` 會自動識別 acme.sh 的環境變數並處理憑證部署。
 
 ### 4. 手動指定憑證路徑 (Manual Usage)
 如果您的憑證檔案不在標準的 ACME 目錄結構中，或者您想要手動指定特定檔案，可以使用以下參數：
