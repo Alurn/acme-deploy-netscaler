@@ -39,21 +39,19 @@ acme.sh 提供兩種方式整合本專案的腳本：
    ```
    *(第一次執行後，acme.sh 會記住設定，未來 renew 時會自動觸發)*
 
-**方式 B：使用外部腳本**
+**方式 B：直接調用腳本**
 
-如果您不想將腳本複製到 acme.sh 目錄，也可以直接使用 `deploy_wrapper.sh` 作為外部部署鉤子：
-
-```bash
-acme.sh --issue -d example.com --renew-hook "/path/to/acme-deploy-netscaler/deploy_wrapper.sh"
-```
-
-或者在已經取得憑證後執行部署：
+如果您不想將腳本複製到 acme.sh 目錄，也可以直接使用 `deploy_wrapper.sh` 來部署憑證：
 
 ```bash
+# 申請憑證時設定部署腳本
+acme.sh --issue -d example.com --deploy-hook "/path/to/acme-deploy-netscaler/deploy_wrapper.sh"
+
+# 或者對已存在的憑證執行部署
 acme.sh --deploy -d example.com --deploy-hook "/path/to/acme-deploy-netscaler/deploy_wrapper.sh"
 ```
 
-> **提示**: 使用外部腳本時，`deploy_wrapper.sh` 會自動識別 acme.sh 的環境變數並處理憑證部署。
+> **提示**: 設定後，acme.sh 會記住這個部署腳本，未來自動續期時會自動執行部署。
 
 ### 4. 手動指定憑證路徑 (Manual Usage)
 如果您的憑證檔案不在標準的 ACME 目錄結構中，或者您想要手動指定特定檔案，可以使用以下參數：
