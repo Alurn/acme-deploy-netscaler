@@ -24,9 +24,47 @@ certbot renew --deploy-hook /path/to/acme-deploy-netscaler/deploy_wrapper.sh
 ### 3. 在 acme.sh 中使用
 雖然 acme.sh 支援內建部署 Hook，但您也可以將此 Wrapper 當作外部 Hook 使用：
 
+1. **安裝 Hook**:
+   將 `deploy/netscaler.sh` 複製到 acme.sh 的 `deploy` 目錄下：
+   ```bash
+   ln -s /path/to/acme-deploy-netscaler/deploy/netscaler.sh ~/.acme.sh/deploy/netscaler.sh
+   ```
+
+2. **執行部署**:
+   現在您可以使用 `netscaler` 作為標準部署模組：
+   ```bash
+   acme.sh --deploy -d example.com --deploy-hook netscaler
+   ```
+   *(第一次執行後，acme.sh 會記住設定，未來 renew 時會自動觸發)*
+
+### 4. 手動指定憑證路徑 (Manual Usage)
+如果您的憑證檔案不在標準的 ACME 目錄結構中，或者您想要手動指定特定檔案，可以使用以下參數：
+
 ```bash
-acme.sh --deploy -d example.com --deploy-hook "exec /path/to/acme-deploy-netscaler/deploy_wrapper.sh"
+./deploy_wrapper.sh \
+  --cert-file /path/to/cert.pem \
+  --key-file /path/to/key.pem \
+  --ca-file /path/to/chain.pem
 ```
+
+### 5. 互動模式 (Interactive Mode)
+如果您直接執行腳本且未提供任何環境變數或參數，腳本將進入互動模式，提示您輸入必要的檔案路徑：
+
+```bash
+./deploy_wrapper.sh
+# 腳本將會詢問您 Certificate, Private Key 和 CA Chain 的路徑
+```
+
+---
+
+## 邏輯優先順序 (Logic Priority)
+
+腳本會依照以下順序決定使用的憑證來源：
+
+1.  **Certbot 環境**: 檢查是否由 Certbot 呼叫 (檢測 `RENEWED_LINEAGE`)。
+2.  **acme.sh 環境**: 檢查是否由 acme.sh 呼叫 (檢測 `CERT_KEY` 和 `CERT_FULLCHAIN`)。
+3.  **手動參數**: 檢查是否提供了 `--cert-file` 等命令行參數。
+4.  **互動模式**: 如果以上皆非，則進入互動模式詢問使用者。
 
 ---
 
