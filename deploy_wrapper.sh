@@ -83,6 +83,7 @@ export CERT_PATH="$CERT_FILE"
 export CERT_KEY_PATH="$CERT_KEY"
 export CA_CERT_PATH="$CA_FILE"
 export CERT_FULLCHAIN_PATH="$CERT_FULLCHAIN"
+export CERT_NAME="" # 初始化以避免 `set -u` 造成的 unbound variable 錯誤
 
 # 設置 NetScaler 連線資訊
 export NS_IP="192.168.2.13"
@@ -95,5 +96,3 @@ source "$SCRIPT_DIR/deploy/netscaler.sh"
 
 # 執行部署
 netscaler_deploy
-
-
