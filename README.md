@@ -116,20 +116,23 @@ acme.sh --deploy -d example.com --deploy-hook "/path/to/acme-deploy-netscaler/de
 向 API 查詢 NetScaler 的韌體版本。
 判斷版本是否高於 14.1 Build 43。如果是，則設定一個內部參數，以便在後續新增/更新憑證時，自動加入 deleteCertKeyFilesOnRemoval 選項。
 
-### 步驟 5: 取得現有憑證列表
-從 NetScaler 獲取所有已安裝的憑證列表，用於後續判斷憑證是否已存在。
+### 步驟 5: 取得現有憑證列表與序號比對
+1. 從 NetScaler 獲取所有已安裝的憑證列表（包含其 `serial` 序號）。
+2. **憑證已存在之判斷機制（使用十六進位序號）**：
+   * 腳本會使用 `openssl x509 -noout -serial` 讀取本地憑證（伺服器憑證與中繼 CA 憑證）的十六進位序列號。
+   * 將讀取出的序號轉換為大寫並移除冒號，接著在取得的 NetScaler 憑證列表中進行比對（如 `grep -qi "$_l_server_serial"`）。
+   * 如果序號已存在於 NetScaler 中，表示該憑證已部署且最新，將會**跳過上傳與建立流程**，避免重複配置或造成不必要的服務中斷。
 
 ### 步驟 6: 選擇部署路徑 (核心邏輯)
 這是腳本的核心分歧點。它會判斷 USE_FULLCHAIN 是否設為 1 且 CERT_FULLCHAIN_PATH 檔案是否存在。
 
 - **路徑 A: Fullchain (Bundle) 部署 (如果條件成立)**
-6A-1: 直接將 fullchain 憑證包和私鑰上傳。
-6A-2: 發送 API 請求，並附帶 "bundle": "yes" 參數，讓 NetScaler 自動處理憑證鏈。
-此路徑會跳過獨立處理 CA 和手動 Link 的步驟。
+  * **6A-1**: 讀取本地憑證序列號比對，若不匹配，則上傳 fullchain 憑證包與私鑰。
+  * **6A-2**: 發送 API 請求，並附帶 `"bundle": "yes"` 參數，讓 NetScaler 自動處理憑證鏈。此路徑會跳過獨立處理 CA 和手動 Link 的步驟。
 - **路徑 B: 標準 (分離) 部署 (如果條件不成立)**
-6B-1: 獨立處理 CA_CERT_PATH，檢查中繼憑證是否存在，如果不存在則上傳並新增。
-6B-2: 獨立處理 CERT_PATH，檢查伺服器憑證是否存在，如果不存在則上傳並新增。
-6B-3: 如果在 6B-1 或 6B-2 中有新增任何憑證，則執行 "Link" 操作，將伺服器憑證與中繼憑證關聯起來。
+  * **6B-1 (中繼 CA 處理)**：讀取本地中繼憑證序列號，若 NetScaler 上無對應序號，則上傳 CA 並新增 `sslcertkey` 物件；若已有匹配序號，則直接沿用已有的 CA 物件名稱。
+  * **6B-2 (伺服器證書處理)**：讀取本地伺服器憑證序列號，若不匹配，則上傳證書與私鑰，並發送 API 新增或更新（`?action=update`）憑證物件。
+  * **6B-3 (連結憑證鏈)**：如果在 6B-1 或 6B-2 中有新增任何憑證，則執行 `"Link"` 操作，將伺服器憑證與中繼憑證關聯起來。
 
 ### 步驟 7: 儲存 NetScaler 設定
 如果前面的步驟中有任何成功的變更，腳本會儲存 USE_FULLCHAIN 等設定到 [acme.sh](http://acme.sh/) 的設定檔中。
