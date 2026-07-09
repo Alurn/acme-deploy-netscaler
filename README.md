@@ -4,7 +4,7 @@
 
 本專案提供了一個強化的封裝腳本 `deploy_wrapper.sh`，可自動識別 ACME 客戶端 (Certbot 或 acme.sh) 並統一環境變數設定。
 
-### 1. 設定連線資訊
+### 步驟 1. 設定連線資訊
 將專案根目錄下的 `.env.example` 複製為 `.env`，並填入您的 NetScaler 連線資訊：
 
 ```bash
@@ -23,14 +23,17 @@ NS_PASS="P@ssw0rd"
 
 > **注意**: `.env` 檔案包含敏感密碼資訊，已被加入 `.gitignore`，請勿將其提交至 Git。
 
-### 2. 在 Certbot 中使用
+### 步驟 2. 選擇部署方式
+您可以根據您的需求，選擇以下其中一種方式進行部署：
+
+#### A. 在 Certbot 中使用
 在 renewing 憑證時指定 `--deploy-hook`：
 
 ```bash
 certbot renew --deploy-hook /path/to/acme-deploy-netscaler/deploy_wrapper.sh
 ```
 
-### 3. 在 acme.sh 中使用
+#### B. 在 acme.sh 中使用
 acme.sh 提供兩種方式整合本專案的腳本：
 
 **方式 A：使用內建模組 (推薦)**
@@ -62,7 +65,7 @@ acme.sh --deploy -d example.com --deploy-hook "/path/to/acme-deploy-netscaler/de
 
 > **提示**: 設定後，acme.sh 會記住這個部署腳本，未來自動續期時會自動執行部署。
 
-### 4. 手動指定憑證路徑 (Manual Usage)
+#### C. 手動指定憑證路徑 (Manual Usage)
 如果您的憑證檔案不在標準的 ACME 目錄結構中，或者您想要手動指定特定檔案，可以使用以下參數：
 
 ```bash
@@ -72,7 +75,7 @@ acme.sh --deploy -d example.com --deploy-hook "/path/to/acme-deploy-netscaler/de
   --ca-file /path/to/chain.pem
 ```
 
-### 5. 互動模式 (Interactive Mode)
+#### D. 互動模式 (Interactive Mode)
 如果您直接執行腳本且未提供任何環境變數或參數，腳本將進入互動模式，提示您輸入必要的檔案路徑：
 
 ```bash
