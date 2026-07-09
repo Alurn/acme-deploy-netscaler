@@ -113,6 +113,31 @@ acme.sh --deploy -d example.com --deploy-hook netscaler
    * 發送 `POST /nitro/v1/config/logout` 銷毀 Session。
    * 移除執行期間在本地產生的 Base64 暫存 JSON Payload。
 
+## 命名與檔案管理規則
+
+腳本在處理 NetScaler 上的證書物件與上傳之實體檔案時，遵循以下命名與儲存規則：
+
+### 1. 憑證與金鑰檔案上傳路徑
+* 所有憑證與私鑰檔案均會被上傳至 NetScaler 的 `/flash/nsconfig/ssl/` 目錄下。
+
+### 2. 伺服器憑證物件 (`CERT_NAME`)
+* **名稱來源**：
+  * 若有手動指定環境變數 `CERT_NAME`，則優先使用該名稱。
+  * 若未指定，將使用 `openssl x509` 解析憑證的 `CN`（Common Name）並**自動過濾星號（`*`）**。例如，萬用字元憑證 `*.example.com` 會自動轉換為 `example.com`。
+* **檔案命名規則**（加入 `YYYYMMDD` 日期後綴防重複）：
+  * **標準模式憑證檔**：`${CERT_NAME}_${YYYYMMDD}.cer`
+  * **合併模式憑證檔 (Fullchain)**：`${CERT_NAME}_fullchain_${YYYYMMDD}.cer`
+  * **私鑰檔案**：`${CERT_NAME}_${YYYYMMDD}.key`
+
+### 3. 中繼 CA 憑證物件
+* **名稱來源**：
+  * 基本格式為 `CA_${CA_CN}`，其中 `${CA_CN}` 是中繼憑證的 Common Name，並將**所有空白字元替換為底線 `_`**（例如 `Let's Encrypt Authority X3` 會轉換為 `CA_Let's_Encrypt_Authority_X3`）。
+* **衝突命名機制**：
+  * 在新增 CA 物件前，腳本會先向 NetScaler 檢查該基本名稱是否已被使用。
+  * 若已存在同名物件且序列號不一致，將自動加上日期後綴命名為：`CA_${CA_CN}_${YYYYMMDD}`，以避免名稱衝突。
+* **檔案命名規則**：
+  * CA 憑證檔：`CA_${CA_CN}_${YYYYMMDD}.cer`
+
 
 ## 疑難排解
 
