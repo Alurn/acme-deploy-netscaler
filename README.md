@@ -5,14 +5,23 @@
 本專案提供了一個強化的封裝腳本 `deploy_wrapper.sh`，可自動識別 ACME 客戶端 (Certbot 或 acme.sh) 並統一環境變數設定。
 
 ### 1. 設定連線資訊
-編輯 `deploy_wrapper.sh`，在檔案中填入 NetScaler 的連線資訊：
+將專案根目錄下的 `.env.example` 複製為 `.env`，並填入您的 NetScaler 連線資訊：
 
 ```bash
-# 設置 NetScaler 連線資訊
-export NS_IP="192.168.2.13"
-export NS_USER="nsroot"
-export NS_PASS="P@ssw0rd"
+# 複製範本檔案
+cp .env.example .env
 ```
+
+接著編輯 `.env` 檔案填入連線資訊：
+
+```env
+# NetScaler 連線資訊
+NS_IP="192.168.2.13"
+NS_USER="nsroot"
+NS_PASS="P@ssw0rd"
+```
+
+> **注意**: `.env` 檔案包含敏感密碼資訊，已被加入 `.gitignore`，請勿將其提交至 Git。
 
 ### 2. 在 Certbot 中使用
 在 renewing 憑證時指定 `--deploy-hook`：
@@ -87,9 +96,11 @@ acme.sh --deploy -d example.com --deploy-hook "/path/to/acme-deploy-netscaler/de
 ## 腳本詳細邏輯 (Internal Logic)
 
 ### 步驟 1: 初始化與環境變數檢查
-從 [acme.sh](http://acme.sh/) 的設定檔中讀取 **NS_IP, NS_USER, NS_PASS, USE_FULLCHAIN** 等設定。
-檢查 **CERT_PATH, CERT_KEY_PATH, CA_CERT_PATH** 等核心路徑是否存在，如果不存在則終止。
-打印出所有憑證路徑以供偵錯。
+1. 從 [acme.sh](http://acme.sh/) 的設定檔或優先環境變數中讀取 **NS_IP, NS_USER, NS_PASS, USE_FULLCHAIN** 等設定。
+2. 若未設定 `NS_IP` 等連線資訊，則嘗試從腳本周邊或當前目錄的 `.env` 檔案中載入。
+3. 檢查 **CERT_PATH, CERT_KEY_PATH, CA_CERT_PATH** 等核心路徑是否存在，如果不存在則終止。
+4. 檢查連線參數是否齊全，不齊全則中止並顯示錯誤訊息。
+5. 打印出所有憑證路徑以供偵錯。
 
 ### 步驟 2: 確定憑證物件名稱 (CERT_NAME)
 優先使用您手動指定的 **CERT_NAME**。
