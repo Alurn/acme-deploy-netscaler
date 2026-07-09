@@ -1,2 +1,3 @@
-# Force LF line endings for shell scripts to prevent execution errors on Windows checkouts
+# Force LF line endings for shell scripts and env files to prevent execution errors and carriage return (\r) issues
 *.sh text eol=lf
+*.env* text eol=lf
