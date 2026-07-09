@@ -26,17 +26,17 @@ NS_PASS="P@ssw0rd"
 ### 步驟 2. 選擇部署方式
 您可以根據您的需求，選擇以下其中一種方式進行部署：
 
-#### A. 在 Certbot 中使用
+#### 在 Certbot 中使用
 在 renewing 憑證時指定 `--deploy-hook`：
 
 ```bash
 certbot renew --deploy-hook /path/to/acme-deploy-netscaler/deploy_wrapper.sh
 ```
 
-#### B. 在 acme.sh 中使用
+#### 在 acme.sh 中使用
 acme.sh 提供兩種方式整合本專案的腳本：
 
-**方式 A：使用內建模組 (推薦)**
+##### 方式 1：使用內建模組 (推薦)
 
 1. **安裝 Hook**:
    將 `deploy/netscaler.sh` 複製到 acme.sh 的 `deploy` 目錄下：
@@ -51,7 +51,7 @@ acme.sh 提供兩種方式整合本專案的腳本：
    ```
    *(第一次執行後，acme.sh 會記住設定，未來 renew 時會自動觸發)*
 
-**方式 B：直接調用腳本**
+##### 方式 2：直接調用腳本
 
 如果您不想將腳本複製到 acme.sh 目錄，也可以直接使用 `deploy_wrapper.sh` 來部署憑證：
 
@@ -65,7 +65,7 @@ acme.sh --deploy -d example.com --deploy-hook "/path/to/acme-deploy-netscaler/de
 
 > **提示**: 設定後，acme.sh 會記住這個部署腳本，未來自動續期時會自動執行部署。
 
-#### C. 手動指定憑證路徑 (Manual Usage)
+#### 手動指定憑證路徑 (Manual Usage)
 如果您的憑證檔案不在標準的 ACME 目錄結構中，或者您想要手動指定特定檔案，可以使用以下參數：
 
 ```bash
@@ -75,7 +75,7 @@ acme.sh --deploy -d example.com --deploy-hook "/path/to/acme-deploy-netscaler/de
   --ca-file /path/to/chain.pem
 ```
 
-#### D. 互動模式 (Interactive Mode)
+#### 互動模式 (Interactive Mode)
 如果您直接執行腳本且未提供任何環境變數或參數，腳本將進入互動模式，提示您輸入必要的檔案路徑：
 
 ```bash
