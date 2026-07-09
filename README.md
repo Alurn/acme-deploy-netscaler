@@ -1,6 +1,6 @@
 # 功能說明
 
-## 使用 Wrapper 腳本 (推薦)
+## 使用 Wrapper 腳本
 
 本專案提供了一個強化的封裝腳本 `deploy_wrapper.sh`，可自動識別 ACME 客戶端 (Certbot 或 acme.sh) 並統一環境變數設定。
 
