@@ -52,21 +52,67 @@ acme.sh --deploy -d example.com --deploy-hook netscaler
 
 部署成功後，`acme.sh` 會自動儲存這些設定，未來續期時無需再次匯出變數。
 
-## 腳本邏輯流程
+## 腳本詳細邏輯流程
 
-1. **初始化確認**: 檢查 `acme.sh` 傳入的憑證路徑變數。
-2. **提取資訊**: 從憑證中自動解析 Common Name (CN) 作為 NetScaler 上的物件名稱。
-3. **登入 API**: 取得 Nitro API Session Token。
-4. **版本偵測**: 檢查 NetScaler 版本，決定是否使用新版參數。
-5. **部署流程**:
-   - **Fullchain 模式**: 上傳並更新 Bundle 憑證。
-   - **標準模式**:
-     - 檢查是否已有對應的 CA 憑證，若無則上傳並建立 CA物件。
-     - 上傳 Server 憑證與私鑰。
-     - 建立或更新 Server CertKey 物件。
-     - 若為新建立，自動執行 Link 指令將 Server Cert 指向 CA。
-6. **儲存設定**: 若有變更設定，執行 `save ns config`。
-7. **清理**: 登出 Session 並刪除暫存檔。
+本腳本透過 Citrix NetScaler Nitro API 執行憑證之部署與更新，其詳細的執行步驟與分支判斷邏輯如下：
+
+1. **初始化與環境變數檢查**：
+   * 檢查並確認由 `acme.sh` 提供之必要路徑變數（`CERT_PATH`, `CERT_KEY_PATH`, `CA_CERT_PATH`），若缺失則安全退出。
+   * 檢查並載入 NetScaler 連線資訊（優先順序：`acme.sh` 設定檔 -> 環境變數 -> `.env` 檔案），若連線變數不足則報錯中止。
+   * 若未指定憑證物件名稱 `CERT_NAME`，將自動透過 `openssl x509` 解析憑證的 `CN`（Common Name）作爲主物件名稱。
+
+2. **登入 API (Login)**：
+   * 發送 `POST` 請求至 `/nitro/v1/config/login`，攜帶帳號密碼。
+   * 呼叫 `_check_api_response` 判斷是否登入成功。
+   * 解析並保存 `sessionid` 作為後續所有 API 操作之 Authorization Token。
+
+3. **版本偵測與參數設置 (Get firmware version)**：
+   * 發送 `GET` 請求至 `/nitro/v1/config/nsversion` 查詢 NetScaler 版本資訊。
+   * 判斷韌體版本是否高於或等於 **14.1 Build 43**：
+     * **是**：自動於後續憑證變更 Payload 中加入 `"deleteCertKeyFilesOnRemoval":"IF_EXPIRED"` 參數，以確保未來憑證被刪除或替換時會自動刪除 NetScaler 快閃記憶體上的實體證書檔案。
+     * **否**：此參數維持為空。
+
+4. **獲取已安裝憑證清單**：
+   * 發送 `GET` 請求至 `/nitro/v1/config/sslcertkey`，取得目前 NetScaler 上所有憑證物件的資訊與其十六進位序號（Serial）。
+
+5. **部署路徑決策 (核心分支)**：
+   依據環境變數 `USE_FULLCHAIN`（是否為 1）及 `CERT_FULLCHAIN_PATH` 檔案是否存在，分流至以下兩路徑：
+
+   * **路徑 A：合併部署 (Fullchain/Bundle)**
+     1. 將合併後的憑證鏈（Fullchain）以 Base64 編碼，透過 `POST /nitro/v1/config/systemfile` 上傳至設備。
+     2. 透過 `GET` 檢查 NetScaler 是否已存在 `CERT_NAME` 物件。
+        * **已存在 (Update 流程)**：設定 API 動作為 `?action=update`，並可選提取舊檔名（若開啟 `NS_DEL_OLD_CERTKEY`）。
+        * **不存在 (Add 流程)**：設定 API 動作為空（新增）。
+     3. 執行憑證綁定（`POST /nitro/v1/config/sslcertkey`），Payload 中加入 `"bundle":"yes"` 參數，由 NetScaler 自動識別憑證鏈。
+     4. 操作成功後，若有舊憑證且開啟 `NS_DEL_OLD_CERTKEY`，則會刪除快閃記憶體中舊有的檔案。
+
+   * **路徑 B：標準獨立部署 (伺服器憑證與中繼 CA 分離)**
+     1. **處理中繼 CA 憑證**：
+        * 使用 `openssl` 提取本地中繼憑證的序列號（Serial），並比對 NetScaler 上已存在的憑證清單。
+        * **已存在相同序列號**：直接跳過上傳，自動匹配現有的 CA 物件名稱，並存為 `_target_ca_certname`。
+        * **不存在相同序列號**：
+          * 上傳中繼憑證至設備。
+          * 檢測 `sslcertkey` 物件名稱是否衝突，若衝突自動加上日期後綴命名。
+          * 新增中繼憑證物件（`POST /nitro/v1/config/sslcertkey`），並將 `_target_ca_certname` 指向該物件。
+     2. **處理伺服器憑證**：
+        * 讀取本地伺服器憑證序列號，若與 NetScaler 現有證書序列號一致，則**跳過上傳與設定流程**。
+        * 若序號不一致：
+          * 上傳新憑證 (.cer) 與私鑰 (.key) 檔案。
+          * 檢測是否已存在 `sslcertkey` 物件：
+            * **已存在 (Update)**：發送 `POST /sslcertkey?action=update` 進行更新；若有開啟 `NS_DEL_OLD_CERTKEY` 則取得舊檔案名稱備用。
+            * **不存在 (Add)**：發送 `POST /sslcertkey` 新增物件，並標記需要進行證書連結 (`_needs_link_cert=true`)。
+          * 若私鑰已被加密，將自動檢查並附帶 `passplain` 解密密碼。
+          * 更新/新增成功後，若有舊憑證且 `NS_DEL_OLD_CERTKEY=1`，刪除 NetScaler 上舊的無用實體檔案。
+     3. **連結中繼憑證 (Link)**：
+        * 當有新建立憑證物件或新增 CA 時，發送 `POST /nitro/v1/config/sslcertkey?action=link`，將伺服器憑證連結至 `_target_ca_certname`（中繼 CA 物件），建立完整鏈路。
+
+6. **儲存配置 (Save Config)**：
+   * 若整個流程中有任何新增、更新或連結動作（`_config_changed=true`），發送 `POST /nitro/v1/config/nsconfig?action=save` 儲存 NetScaler 配置（等同於執行 `save ns config`）。
+
+7. **登出與清理 (Logout & Cleanup)**：
+   * 發送 `POST /nitro/v1/config/logout` 銷毀 Session。
+   * 移除執行期間在本地產生的 Base64 暫存 JSON Payload。
+
 
 ## 疑難排解
 
