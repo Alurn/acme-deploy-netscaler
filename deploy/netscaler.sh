@@ -14,10 +14,29 @@ if type _getdeployconf >/dev/null 2>&1; then
   _getdeployconf NS_DEL_OLD_CERTKEY
 fi
 
-# Custom settings (use default values if environment variables are not provided)
-NS_IP="${NS_IP:-192.168.100.1}"
-NS_USER="${NS_USER:-nsroot}"
-NS_PASS="${NS_PASS:-nsroot}"
+# If NetScaler connection variables are missing, attempt to load them from .env file
+if [ -z "${NS_IP:-}" ] || [ -z "${NS_USER:-}" ] || [ -z "${NS_PASS:-}" ]; then
+  _SCRIPT_DIR=""
+  if [ -n "${BASH_SOURCE[0]-}" ]; then
+    _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  fi
+
+  if [ -n "$_SCRIPT_DIR" ] && [ -f "$_SCRIPT_DIR/../.env" ]; then
+    # shellcheck disable=SC1090
+    . "$_SCRIPT_DIR/../.env"
+  elif [ -n "$_SCRIPT_DIR" ] && [ -f "$_SCRIPT_DIR/.env" ]; then
+    # shellcheck disable=SC1090
+    . "$_SCRIPT_DIR/.env"
+  elif [ -f "./.env" ]; then
+    # shellcheck disable=SC1090
+    . "./.env"
+  fi
+fi
+
+# Custom settings (no default fallback values in code)
+NS_IP="${NS_IP:-}"
+NS_USER="${NS_USER:-}"
+NS_PASS="${NS_PASS:-}"
 CERT_FULLCHAIN_PATH="${CERT_FULLCHAIN_PATH:-}"
 USE_FULLCHAIN="${USE_FULLCHAIN:-0}"   # Default: do not use FULLCHAIN
 NS_API_LOG="${NS_API_LOG:-0}"   # Default: do not record API Log
@@ -63,6 +82,11 @@ netscaler_deploy() {
     _ns_info "Values: CERT_PATH='$CERT_PATH', CERT_KEY_PATH='$CERT_KEY_PATH', CA_CERT_PATH='$CA_CERT_PATH', CERT_FULLCHAIN_PATH='$CERT_FULLCHAIN_PATH'"
     return 0
   fi
+
+  if [ -z "$NS_IP" ] || [ -z "$NS_USER" ] || [ -z "$NS_PASS" ]; then
+    _ns_error "Required NetScaler connection variables (NS_IP, NS_USER, NS_PASS) are missing. Please set them in your environment or .env file."
+  fi
+
   _ns_info "acme.sh provided certificate path: CERT_PATH='$CERT_PATH'"
   _ns_info "acme.sh provided certificate path: CERT_KEY_PATH='$CERT_KEY_PATH'"
   _ns_info "acme.sh provided certificate path: CA_CERT_PATH='$CA_CERT_PATH'"

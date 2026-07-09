@@ -85,13 +85,19 @@ export CA_CERT_PATH="$CA_FILE"
 export CERT_FULLCHAIN_PATH="$CERT_FULLCHAIN"
 export CERT_NAME="" # 初始化以避免 `set -u` 造成的 unbound variable 錯誤
 
-# 設置 NetScaler 連線資訊
-export NS_IP="192.168.2.13"
-export NS_USER="nsroot"
-export NS_PASS="P@ssw0rd"
+# 載入 .env 檔案中的環境變數
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    # shellcheck disable=SC1090
+    source "$SCRIPT_DIR/.env"
+fi
+
+# 設置 NetScaler 連線資訊並導出
+export NS_IP="${NS_IP:-}"
+export NS_USER="${NS_USER:-}"
+export NS_PASS="${NS_PASS:-}"
 
 # 載入函數庫
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/deploy/netscaler.sh"
 
 # 執行部署
