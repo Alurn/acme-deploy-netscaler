@@ -96,6 +96,7 @@ fi
 export NS_IP="${NS_IP:-}"
 export NS_USER="${NS_USER:-}"
 export NS_PASS="${NS_PASS:-}"
+export USE_FULLCHAIN=1 # 預設使用 Fullchain 合併部署模式
 
 # 載入函數庫
 source "$SCRIPT_DIR/deploy/netscaler.sh"
