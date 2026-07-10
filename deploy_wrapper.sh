@@ -97,6 +97,7 @@ export NS_IP="${NS_IP:-}"
 export NS_USER="${NS_USER:-}"
 export NS_PASS="${NS_PASS:-}"
 export USE_FULLCHAIN=1 # 預設使用 Fullchain 合併部署模式
+export NS_DEL_OLD_CERTKEY=1 # 更新憑證時自動刪除舊憑證與私鑰檔
 
 # 載入函數庫
 source "$SCRIPT_DIR/deploy/netscaler.sh"
