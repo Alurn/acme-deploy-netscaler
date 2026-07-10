@@ -78,13 +78,14 @@ acme.sh --deploy -d example.com --deploy-hook netscaler
 5. **部署路徑決策 (核心分支)**：
    依據環境變數 `USE_FULLCHAIN`（是否為 1）及 `CERT_FULLCHAIN_PATH` 檔案是否存在，分流至以下兩路徑：
 
-   * **路徑 A：合併部署 (Fullchain/Bundle)**
-     1. 將合併後的憑證鏈（Fullchain）以 Base64 編碼，透過 `POST /nitro/v1/config/systemfile` 上傳至設備。
-     2. 透過 `GET` 檢查 NetScaler 是否已存在 `CERT_NAME` 物件。
-        * **已存在 (Update 流程)**：設定 API 動作為 `?action=update`，並可選提取舊檔名（若開啟 `NS_DEL_OLD_CERTKEY`）。
-        * **不存在 (Add 流程)**：設定 API 動作為空（新增）。
-     3. 執行憑證綁定（`POST /nitro/v1/config/sslcertkey`），Payload 中加入 `"bundle":"yes"` 參數，由 NetScaler 自動識別憑證鏈。
-     4. 操作成功後，若有舊憑證且開啟 `NS_DEL_OLD_CERTKEY`，則會刪除快閃記憶體中舊有的檔案。
+    * **路徑 A：合併部署 (Fullchain/Bundle)**
+      1. 使用 `openssl` 讀取本地合併憑證（Fullchain）中的伺服器憑證序列號，並比對 NetScaler 上已存在的憑證清單。若已存在相同序列號，則**直接跳過上傳與部署流程**。
+      2. 若序列號不匹配，則將合併後的憑證鏈（Fullchain）以 Base64 編碼，透過 `POST /nitro/v1/config/systemfile` 上傳至設備，同時上傳私鑰檔。
+      3. 透過 `GET` 檢查 NetScaler 是否已存在 `CERT_NAME` 物件。
+         * **已存在 (Update 流程)**：設定 API 動作為 `?action=update`，並可選提取舊檔名（若開啟 `NS_DEL_OLD_CERTKEY`）。
+         * **不存在 (Add 流程)**：設定 API 動作為空（新增）。
+      4. 執行憑證綁定（`POST /nitro/v1/config/sslcertkey`），Payload 中加入 `"bundle":"yes"` 參數，由 NetScaler 自動識別憑證鏈。
+      5. 操作成功後，若有舊憑證且開啟 `NS_DEL_OLD_CERTKEY`，則會刪除快閃記憶體中舊有的檔案。
 
    * **路徑 B：標準獨立部署 (伺服器憑證與中繼 CA 分離)**
      1. **處理中繼 CA 憑證**：
