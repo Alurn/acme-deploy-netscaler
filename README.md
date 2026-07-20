@@ -35,7 +35,7 @@ NS_PASS="P@ssw0rd"
 在 renewing 憑證時指定 `--deploy-hook`：
 
 ```bash
-certbot renew --deploy-hook /path/to/acme-deploy-netscaler/deploy_wrapper.sh
+certbot renew --deploy-hook <PATH>/deploy_wrapper.sh
 ```
 
 #### 在 acme.sh 中使用
@@ -44,9 +44,10 @@ acme.sh 提供兩種方式整合本專案的腳本：
 ##### 方式 1：使用內建模組 (推薦)
 
 1. **安裝 Hook**:
-   將 `deploy/netscaler.sh` 複製到 acme.sh 的 `deploy` 目錄下：
+   將 `deploy/netscaler.sh` 複製到您的 acme.sh `deploy` 目錄下（預設路徑為 `~/.acme.sh/deploy/`）：
    ```bash
-   cp /path/to/acme-deploy-netscaler/deploy/netscaler.sh ~/.acme.sh/deploy/netscaler.sh
+   # 如果您的 acme.sh 安裝在自訂路徑或 root 家目錄下，請將 ~/.acme.sh 替換為實際安裝路徑
+   cp deploy/netscaler.sh ~/.acme.sh/deploy/netscaler.sh
    ```
 
 2. **執行部署**:
@@ -62,10 +63,10 @@ acme.sh 提供兩種方式整合本專案的腳本：
 
 ```bash
 # 申請憑證時設定部署腳本
-acme.sh --issue -d example.com --deploy-hook "/path/to/acme-deploy-netscaler/deploy_wrapper.sh"
+acme.sh --issue -d example.com --deploy-hook "<PATH>/deploy_wrapper.sh"
 
 # 或者對已存在的憑證執行部署
-acme.sh --deploy -d example.com --deploy-hook "/path/to/acme-deploy-netscaler/deploy_wrapper.sh"
+acme.sh --deploy -d example.com --deploy-hook "<PATH>/deploy_wrapper.sh"
 ```
 
 > **提示**: 設定後，acme.sh 會記住這個部署腳本，未來自動續期時會自動執行部署。
