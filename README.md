@@ -4,6 +4,11 @@
 
 本專案提供了一個強化的封裝腳本 `deploy_wrapper.sh`，可自動識別 ACME 客戶端 (Certbot 或 acme.sh) 並統一環境變數設定。
 
+> [!IMPORTANT]
+> **專案目錄結構完整性**：
+> 核心部署邏輯實作於 `deploy/netscaler.sh` 中。`deploy_wrapper.sh` 執行時會以相對路徑 `source "$SCRIPT_DIR/deploy/netscaler.sh"` 載入它。
+> 因此，除了使用「acme.sh 方式 1」（將 `netscaler.sh` 複製到 acme.sh 目錄下）之外，其餘使用 `deploy_wrapper.sh` 的部署方式都**必須維持整個專案目錄結構的完整性**，請勿將 `deploy_wrapper.sh` 單獨移出或複製到其他沒有 `deploy/` 資料夾的路徑執行。
+
 ### 步驟 1. 設定連線資訊
 將專案根目錄下的 `.env.example` 複製為 `.env`，並填入您的 NetScaler 連線資訊：
 
@@ -96,7 +101,7 @@ acme.sh --deploy -d example.com --deploy-hook "/path/to/acme-deploy-netscaler/de
 
 ---
 
-## 腳本詳細邏輯 (Internal Logic)
+## 核心部署腳本詳細邏輯 (deploy/netscaler.sh)
 
 ### 步驟 1: 初始化與環境變數檢查
 1. 從 [acme.sh](http://acme.sh/) 的設定檔或優先環境變數中讀取 **NS_IP, NS_USER, NS_PASS, USE_FULLCHAIN** 等設定。
