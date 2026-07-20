@@ -35,7 +35,7 @@ NS_PASS="P@ssw0rd"
 在 renewing 憑證時指定 `--deploy-hook`：
 
 ```bash
-certbot renew --deploy-hook <PATH>/deploy_wrapper.sh
+certbot renew --deploy-hook "<PATH>/deploy_wrapper.sh"
 ```
 
 #### 在 acme.sh 中使用
@@ -59,17 +59,15 @@ acme.sh 提供兩種方式整合本專案的腳本：
 
 ##### 方式 2：直接調用腳本
 
-如果您不想將腳本複製到 acme.sh 目錄，也可以直接使用 `deploy_wrapper.sh` 來部署憑證：
+如果您不想將腳本複製到 acme.sh 目錄，也可以直接使用 `deploy_wrapper.sh` 來部署憑證。建議採取以下兩步驟進行：
 
 ```bash
-# 申請憑證時設定部署腳本
-acme.sh --issue -d example.com --deploy-hook "<PATH>/deploy_wrapper.sh"
+# 1. 先簽發憑證（請根據您的驗證方式加上對應參數，例如 --dns 或 -w）
+acme.sh --issue -d example.com ...
 
-# 或者對已存在的憑證執行部署
+# 2. 設定並執行部署（設定後 acme.sh 會記住此部署腳本，未來自動續期時會自動執行部署）
 acme.sh --deploy -d example.com --deploy-hook "<PATH>/deploy_wrapper.sh"
 ```
-
-> **提示**: 設定後，acme.sh 會記住這個部署腳本，未來自動續期時會自動執行部署。
 
 #### 手動指定憑證路徑 (Manual Usage)
 如果您的憑證檔案不在標準的 ACME 目錄結構中，或者您想要手動指定特定檔案，可以使用以下參數：
@@ -96,7 +94,7 @@ acme.sh --deploy -d example.com --deploy-hook "<PATH>/deploy_wrapper.sh"
 腳本會依照以下順序決定使用的憑證來源：
 
 1.  **Certbot 環境**: 檢查是否由 Certbot 呼叫 (檢測 `RENEWED_LINEAGE`)。
-2.  **acme.sh 環境**: 檢查是否由 acme.sh 呼叫 (檢測 `CERT_KEY` 和 `CERT_FULLCHAIN`)。
+2.  **acme.sh 環境**: 檢查是否由 acme.sh 呼叫 (檢測 `CERT_KEY` 和 `CERT_FULLCHAIN`，這兩個是 acme.sh 呼叫外部部署腳本時官方所導出的環境變數)。
 3.  **手動參數**: 檢查是否提供了 `--cert-file` 等命令行參數。
 4.  **互動模式**: 如果以上皆非，則進入互動模式詢問使用者。
 
@@ -107,7 +105,7 @@ acme.sh --deploy -d example.com --deploy-hook "<PATH>/deploy_wrapper.sh"
 ### 步驟 1: 初始化與環境變數檢查
 1. 從 [acme.sh](http://acme.sh/) 的設定檔或優先環境變數中讀取 **NS_IP, NS_USER, NS_PASS, USE_FULLCHAIN** 等設定。
 2. 若未設定 `NS_IP` 等連線資訊，則嘗試從腳本周邊或當前目錄的 `.env` 檔案中載入。
-3. 檢查 **CERT_PATH, CERT_KEY_PATH, CA_CERT_PATH** 等核心路徑是否存在，如果不存在則終止。
+3. 檢查 **CERT_PATH, CERT_KEY_PATH, CA_CERT_PATH** 等路徑是否存在（這些是 acme.sh 模組內部的官方變數名稱。若是經由 `deploy_wrapper.sh` 呼叫，Wrapper 會將 `acme.sh` 導出的環境變數轉化對齊為這些變數）。
 4. 檢查連線參數是否齊全，不齊全則中止並顯示錯誤訊息。
 5. 打印出所有憑證路徑以供偵錯。
 
