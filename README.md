@@ -1,13 +1,31 @@
 # 功能說明
+本專案提供兩個腳本：
+
+- **`deploy/netscaler.sh`** – 直接與 Citrix NetScaler Nitro API 溝通的核心部署邏輯。
+- **`deploy_wrapper.sh`** – 包裝器，負責偵測使用的 ACME 客戶端、匯入環境變數並呼叫 `netscaler.sh`。
 
 ## 使用 Wrapper 腳本
 
 本專案提供了一個強化的封裝腳本 `deploy_wrapper.sh`，可自動識別 ACME 客戶端 (Certbot 或 acme.sh) 並統一環境變數設定。
 
-> [!IMPORTANT]
-> **專案目錄結構完整性**：
-> 核心部署邏輯實作於 `deploy/netscaler.sh` 中。`deploy_wrapper.sh` 執行時會以相對路徑 `source "$SCRIPT_DIR/deploy/netscaler.sh"` 載入它。
-> 因此，除了使用「acme.sh 方式 1」（將 `netscaler.sh` 複製到 acme.sh 目錄下）之外，其餘使用 `deploy_wrapper.sh` 的部署方式都**必須維持整個專案目錄結構的完整性**，請勿將 `deploy_wrapper.sh` 單獨移出或複製到其他沒有 `deploy/` 資料夾的路徑執行。
+> **⚠️ 重要**  
+> `deploy_wrapper.sh` 會以相對路徑 `source "$SCRIPT_DIR/deploy/netscaler.sh"` 載入核心腳本，**務必保留整個目錄結構**，否則會因找不到檔案而失敗。
+
+---
+
+## 目錄結構
+
+```
+acme-deploy-netscaler/
+├─ .env.example           # 範本環境設定檔
+├─ deploy/
+│  ├─ netscaler.sh        # 核心部署腳本
+│  └─ README.md           # 本檔案（說明文件）
+├─ deploy_wrapper.sh       # 包裝腳本
+└─ README.md               # 專案說明（本檔）
+```
+
+---
 
 ### 步驟 1. 設定連線資訊
 將專案根目錄下的 `.env.example` 複製為 `.env`，並填入您的 NetScaler 連線資訊：
@@ -26,7 +44,7 @@ NS_USER="nsroot"
 NS_PASS="P@ssw0rd"
 ```
 
-> **注意**: `.env` 檔案包含敏感密碼資訊，已被加入 `.gitignore`，請勿將其提交至 Git。
+> **💡 小提醒**：`.env` 內含明文密碼，已加入 `.gitignore`，請勿提交至 Git。
 
 ### 步驟 2. 選擇部署方式
 您可以根據您的需求，選擇以下其中一種方式進行部署：
