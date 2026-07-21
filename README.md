@@ -2,7 +2,7 @@
 本專案提供兩個腳本：
 
 - **`deploy/netscaler.sh`** – 直接與 Citrix NetScaler Nitro API 溝通的核心部署邏輯。
-- **`deploy_wrapper.sh`** – 包裝器，負責偵測使用的 ACME 客戶端、匯入環境變數並呼叫 `netscaler.sh`。
+- **`deploy_wrapper.sh`** – 入口腳本，負責偵測使用的 ACME 客戶端、匯入環境變數並呼叫 `netscaler.sh`。
 
 ## 使用 Wrapper 腳本
 
@@ -57,9 +57,6 @@ certbot renew --deploy-hook "<PATH>/deploy_wrapper.sh"
 ```
 
 #### 在 acme.sh 中使用
-acme.sh 提供兩種方式整合本專案的腳本：
-
-##### 方式 1：使用內建模組 (推薦)
 
 1. **安裝 Hook**:
    將 `deploy/netscaler.sh` 複製到您的 acme.sh `deploy` 目錄下（預設路徑為 `~/.acme.sh/deploy/`）：
@@ -74,18 +71,6 @@ acme.sh 提供兩種方式整合本專案的腳本：
    acme.sh --deploy -d example.com --deploy-hook netscaler
    ```
    *(第一次執行後，acme.sh 會記住設定，未來 renew 時會自動觸發)*
-
-##### 方式 2：直接調用腳本
-
-如果您不想將腳本複製到 acme.sh 目錄，也可以直接使用 `deploy_wrapper.sh` 來部署憑證。建議採取以下兩步驟進行：
-
-```bash
-# 1. 先簽發憑證（請根據您的驗證方式加上對應參數，例如 --dns 或 -w）
-acme.sh --issue -d example.com ...
-
-# 2. 設定並執行部署（設定後 acme.sh 會記住此部署腳本，未來自動續期時會自動執行部署）
-acme.sh --deploy -d example.com --deploy-hook "<PATH>/deploy_wrapper.sh"
-```
 
 #### 手動指定憑證路徑 (Manual Usage)
 如果您的憑證檔案不在標準的 ACME 目錄結構中，或者您想要手動指定特定檔案，可以使用以下參數：
