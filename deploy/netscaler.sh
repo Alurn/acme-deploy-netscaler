@@ -12,6 +12,7 @@ if type _getdeployconf >/dev/null 2>&1; then
   _getdeployconf USE_FULLCHAIN
   _getdeployconf NS_API_LOG
   _getdeployconf NS_DEL_OLD_CERTKEY
+  _getdeployconf NS_INSTALL_NEW_CERT
 fi
 
 # If NetScaler connection variables are missing, attempt to load them from .env file
@@ -41,6 +42,7 @@ CERT_FULLCHAIN_PATH="${CERT_FULLCHAIN_PATH:-}"
 USE_FULLCHAIN="${USE_FULLCHAIN:-0}"   # Default: do not use FULLCHAIN
 NS_API_LOG="${NS_API_LOG:-0}"   # Default: do not record API Log
 NS_DEL_OLD_CERTKEY="${NS_DEL_OLD_CERTKEY:-0}"   # Default: do not delete old certificate files
+NS_INSTALL_NEW_CERT="${NS_INSTALL_NEW_CERT:-0}"   # Default: 0 (Update mode), 1 (Install new certkey & switch VServer bindings)
 
 # Certificate file encryption password
 CERT_KEY_PASS="${CERT_KEY_PASS:-}"
@@ -95,7 +97,7 @@ netscaler_deploy() {
   # --- Step 2: Determine certificate object name (CERT_NAME) ---
   if [ -z "$CERT_NAME" ]; then
     # Use OpenSSL syntax to extract subject name
-    CERT_NAME=$(openssl x509 -in "$CERT_PATH" -noout -subject | sed -n 's/.*CN = //p' | cut -d'/' -f1 | tr -d '*')
+    CERT_NAME=$(openssl x509 -in "$CERT_PATH" -noout -subject | sed -n 's/.*CN *= *//p' | cut -d'/' -f1 | cut -d',' -f1 | sed 's/\*\.//g' | tr -d '*' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     _ns_info "Automatically extracted Common Name (CERT_NAME) from server certificate: $CERT_NAME"
   fi
 
@@ -226,6 +228,7 @@ netscaler_deploy() {
   # Status recording variables
   _config_changed=false
   _ca_certnames=()
+  _target_server_certkey="$CERT_NAME"
 
   # --- Function: API file upload ---
   _upload_to_ns() {
@@ -286,45 +289,69 @@ EOF
     fi
 
     _l_server_serial=$(openssl x509 -in "$_local_cert_path" -noout -serial | cut -d'=' -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')
-    _r_key_file="${CERT_NAME}_${_date_suffix}_${_l_server_serial:0:3}.key"
+    _r_key_file="${CERT_NAME}_${_date_suffix}_${_l_server_serial: -3}.key"
 
     if echo "$_ns_all_certs" | grep -qi "\"serial\": *\"${_l_server_serial}\""; then
       _ns_info "Server certificate serial matches, skipping upload."
+      if [ "$NS_INSTALL_NEW_CERT" = "1" ]; then
+        _target_server_certkey=$(echo "$_ns_all_certs" | sed -E 's/\},[[:space:]]*\{/}\n{/g' | grep -i "\"serial\": *\"${_l_server_serial}\"" | sed -n 's/.*"certkey": *"\([^"]*\)".*/\1/p' | head -n 1)
+        _ns_info "Using existing server certkey object: [$_target_server_certkey]"
+      fi
     else
       _upload_to_ns "$_local_cert_path" "$_remote_cert_filename"
       _upload_to_ns "$CERT_KEY_PATH" "$_r_key_file"
 
-      _check_server_code=$(curl -s -k --connect-timeout 10 -o /dev/null -w "%{http_code}" \
-        -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
-        "https://${NS_IP}/nitro/v1/config/sslcertkey/${CERT_NAME}")
-
       local _method="POST"
       local _action=""
-      if [ "$_check_server_code" == "200" ]; then
-        # If deletion of old files is enabled, fetch current certificate info
-        if [ "$NS_DEL_OLD_CERTKEY" = "1" ]; then
-          _ns_info "NS_DEL_OLD_CERTKEY is enabled. Fetching current cert files for potential deletion."
-          local _current_cert_details=$(curl -s -k --connect-timeout 10 -X GET \
-              -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
-              "https://${NS_IP}/nitro/v1/config/sslcertkey/${CERT_NAME}")
-          _old_cert_filename=$(echo "$_current_cert_details" | grep -oP '"cert":\s*"\K[^"]+')
-          _old_key_filename=$(echo "$_current_cert_details" | grep -oP '"key":\s*"\K[^"]+')
+
+      if [ "$NS_INSTALL_NEW_CERT" = "1" ]; then
+        _target_server_certkey="${CERT_NAME}_${_date_suffix}"
+        local _check_new_code
+        _check_new_code=$(curl -s -k --connect-timeout 10 -o /dev/null -w "%{http_code}" \
+          -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
+          "https://${NS_IP}/nitro/v1/config/sslcertkey/${_target_server_certkey}")
+        if [ "$_check_new_code" == "200" ]; then
+          _target_server_certkey="${CERT_NAME}_${_date_suffix}_${_l_server_serial: -3}"
+          _ns_info "Install certkey name conflict, renamed to [$_target_server_certkey]"
         fi
-        
-        if [ "$_is_bundle" = "true" ]; then
-          _ns_info "Executing Update Server certificate bundle (POST with action=update)..."
-        else
-          _ns_info "Executing Update Server certificate (POST with action=update)..."
-        fi
-        _action="?action=update"
-      else
         if [ "$_is_bundle" = "true" ]; then
           _bundle_param=',"bundle":"yes"'
-          _ns_info "Executing Add Server certificate bundle (POST)..."
+          _ns_info "Executing Install new Server certificate bundle [$_target_server_certkey] (POST)..."
         else
-          _ns_info "Executing Add Server certificate (POST)..."
+          _ns_info "Executing Install new Server certificate [$_target_server_certkey] (POST)..."
         fi
-        _action=""
+      else
+        _target_server_certkey="$CERT_NAME"
+        _check_server_code=$(curl -s -k --connect-timeout 10 -o /dev/null -w "%{http_code}" \
+          -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
+          "https://${NS_IP}/nitro/v1/config/sslcertkey/${_target_server_certkey}")
+
+        if [ "$_check_server_code" == "200" ]; then
+          # If deletion of old files is enabled, fetch current certificate info
+          if [ "$NS_DEL_OLD_CERTKEY" = "1" ]; then
+            _ns_info "NS_DEL_OLD_CERTKEY is enabled. Fetching current cert files for potential deletion."
+            local _current_cert_details=$(curl -s -k --connect-timeout 10 -X GET \
+                -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
+                "https://${NS_IP}/nitro/v1/config/sslcertkey/${_target_server_certkey}")
+            _old_cert_filename=$(echo "$_current_cert_details" | grep -oP '"cert":\s*"\K[^"]+')
+            _old_key_filename=$(echo "$_current_cert_details" | grep -oP '"key":\s*"\K[^"]+')
+          fi
+          
+          if [ "$_is_bundle" = "true" ]; then
+            _ns_info "Executing Update Server certificate bundle (POST with action=update)..."
+          else
+            _ns_info "Executing Update Server certificate (POST with action=update)..."
+          fi
+          _action="?action=update"
+        else
+          if [ "$_is_bundle" = "true" ]; then
+            _bundle_param=',"bundle":"yes"'
+            _ns_info "Executing Add Server certificate bundle (POST)..."
+          else
+            _ns_info "Executing Add Server certificate (POST)..."
+          fi
+          _action=""
+        fi
       fi
 
       local _certkey_pass_param=""
@@ -336,7 +363,7 @@ EOF
         _certkey_pass_param=",\"passplain\":\"${CERT_KEY_PASS}\""
       fi
 
-      local _payload_server="{ \"sslcertkey\": { \"certkey\": \"${CERT_NAME}\", \"cert\": \"$_remote_cert_filename\", \"key\": \"$_r_key_file\"${_bundle_param}${_certkey_pass_param}$_delete_certfile_param } }"
+      local _payload_server="{ \"sslcertkey\": { \"certkey\": \"${_target_server_certkey}\", \"cert\": \"$_remote_cert_filename\", \"key\": \"$_r_key_file\"${_bundle_param}${_certkey_pass_param}$_delete_certfile_param } }"
 
       local _res_server
       _res_server=$(curl -s -k --connect-timeout 10 -w "\n%{http_code}" -X "$_method" -H "Content-Type: application/json" \
@@ -345,11 +372,11 @@ EOF
         "https://${NS_IP}/nitro/v1/config/sslcertkey${_action}")
       
       if [ "$_is_bundle" = "true" ]; then
-        _log_api_payload "$_method Server bundle ($CERT_NAME $_action)" "$_payload_server" "$_res_server"
+        _log_api_payload "$_method Server bundle ($_target_server_certkey $_action)" "$_payload_server" "$_res_server"
         if _check_api_response "$_res_server" "Server certificate bundle operation"; then
           _config_changed=true
-          # If deletion is enabled and old file differs from new file, execute deletion
-          if [ "$NS_DEL_OLD_CERTKEY" = "1" ]; then
+          # If deletion is enabled (only in Update mode) and old file differs from new file, execute deletion
+          if [ "$NS_INSTALL_NEW_CERT" != "1" ] && [ "$NS_DEL_OLD_CERTKEY" = "1" ]; then
             if [ -n "$_old_cert_filename" ] && [ "$_old_cert_filename" != "$_remote_cert_filename" ]; then
                _delete_ns_file "$_old_cert_filename"
             fi
@@ -361,11 +388,11 @@ EOF
           _ns_error "Server certificate bundle operation failed: $_res_server"
         fi
       else
-        _log_api_payload "$_method Server ($CERT_NAME $_action)" "$_payload_server" "$_res_server"
+        _log_api_payload "$_method Server ($_target_server_certkey $_action)" "$_payload_server" "$_res_server"
         if _check_api_response "$_res_server" "Server certificate operation"; then
           _config_changed=true
-          # If deletion is enabled and old file differs from new file, execute deletion
-          if [ "$NS_DEL_OLD_CERTKEY" = "1" ]; then
+          # If deletion is enabled (only in Update mode) and old file differs from new file, execute deletion
+          if [ "$NS_INSTALL_NEW_CERT" != "1" ] && [ "$NS_DEL_OLD_CERTKEY" = "1" ]; then
             if [ -n "$_old_cert_filename" ] && [ "$_old_cert_filename" != "$_remote_cert_filename" ]; then
                _delete_ns_file "$_old_cert_filename"
             fi
@@ -442,6 +469,95 @@ EOF
     fi
   }
 
+  # --- Function: Find old certkeys with same Subject CN and switch VServer bindings ---
+  _switch_vserver_bindings() {
+    local _raw_server_cn
+    _raw_server_cn=$(openssl x509 -in "$CERT_PATH" -noout -subject | sed -n 's/.*CN *= *//p' | cut -d'/' -f1 | cut -d',' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    if [ -z "$_raw_server_cn" ]; then
+      _ns_warn "Unable to extract Subject CN from $CERT_PATH, skipping VServer binding switch."
+      return 0
+    fi
+
+    _ns_info "Searching for old server certificates with Subject CN [$_raw_server_cn] to migrate VServer bindings to [$_target_server_certkey]..."
+
+    local _cert_obj _obj_certkey _obj_subject _obj_cn
+    while IFS= read -r _cert_obj; do
+      [ -z "$_cert_obj" ] && continue
+      echo "$_cert_obj" | grep -q '"SRVR_CERT"' || continue
+
+      _obj_certkey=$(echo "$_cert_obj" | sed -n 's/.*"certkey": *"\([^"]*\)".*/\1/p' | head -n 1)
+      [ -z "$_obj_certkey" ] && continue
+      [ "$_obj_certkey" = "$_target_server_certkey" ] && continue
+
+      _obj_subject=$(echo "$_cert_obj" | sed -n 's/.*"subject": *"\([^"]*\)".*/\1/p' | head -n 1)
+      _obj_cn=$(echo "$_obj_subject" | sed -n 's/.*CN *= *//p' | cut -d'/' -f1 | cut -d',' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+      [ "$_obj_cn" = "$_raw_server_cn" ] || continue
+
+      _ns_info "Found matching old server certificate [$_obj_certkey] (CN: $_obj_cn). Checking VServer bindings..."
+
+      local _res_bindings
+      _res_bindings=$(curl -s -k --connect-timeout 10 -w "\n%{http_code}" -X GET \
+        -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
+        "https://${NS_IP}/nitro/v1/config/sslcertkey_sslvserver_binding/${_obj_certkey}")
+      _log_api_payload "sslcertkey_sslvserver_binding (GET $_obj_certkey)" "GET" "$_res_bindings"
+
+      local _vservers
+      _vservers=$(echo "$_res_bindings" | sed -E 's/\},[[:space:]]*\{/}\n{/g' | sed -n 's/.*"servername": *"\([^"]*\)".*/\1/p')
+      if [ -z "$_vservers" ]; then
+        _ns_info "No VServer bindings found on old certificate [$_obj_certkey]."
+        continue
+      fi
+
+      local _vserver
+      while IFS= read -r _vserver; do
+        [ -z "$_vserver" ] && continue
+
+        # Query VServer bindings to detect whether -SNICert is enabled for this certkey
+        local _res_vs_bindings _is_sni
+        _res_vs_bindings=$(curl -s -k --connect-timeout 10 -X GET \
+          -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
+          "https://${NS_IP}/nitro/v1/config/sslvserver_sslcertkey_binding/${_vserver}")
+        _log_api_payload "sslvserver_sslcertkey_binding (GET $_vserver)" "GET" "$_res_vs_bindings"
+
+        _is_sni=false
+        if echo "$_res_vs_bindings" | sed -E 's/\},[[:space:]]*\{/}\n{/g' | grep -F "\"certkeyname\": \"$_obj_certkey\"" | grep -qi '"snicert": *true'; then
+          _is_sni=true
+        fi
+
+        local _unbind_args="certkeyname:${_obj_certkey}"
+        local _sni_json_param=""
+        if [ "$_is_sni" = "true" ]; then
+          _unbind_args="certkeyname:${_obj_certkey},snicert:true"
+          _sni_json_param=',"snicert":true'
+        fi
+
+        _ns_info "Unbinding old certificate [$_obj_certkey] from VServer [$_vserver] (SNI: $_is_sni)..."
+        local _res_unbind
+        _res_unbind=$(curl -s -k --connect-timeout 10 -w "\n%{http_code}" -X DELETE \
+          -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
+          "https://${NS_IP}/nitro/v1/config/sslvserver_sslcertkey_binding/${_vserver}?args=${_unbind_args}")
+        _log_api_payload "sslvserver_sslcertkey_binding (UNBIND $_vserver / $_obj_certkey)" "DELETE" "$_res_unbind"
+        if ! _check_api_response "$_res_unbind" "Unbind $_obj_certkey from $_vserver"; then
+          _ns_error "Failed to unbind [$_obj_certkey] from VServer [$_vserver]: $_res_unbind"
+        fi
+
+        _ns_info "Binding new certificate [$_target_server_certkey] to VServer [$_vserver] (SNI: $_is_sni)..."
+        local _payload_bind="{ \"sslvserver_sslcertkey_binding\": { \"vservername\": \"${_vserver}\", \"certkeyname\": \"${_target_server_certkey}\"${_sni_json_param} } }"
+        local _res_bind
+        _res_bind=$(curl -s -k --connect-timeout 10 -w "\n%{http_code}" -X POST -H "Content-Type: application/json" \
+          -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
+          -d "$_payload_bind" \
+          "https://${NS_IP}/nitro/v1/config/sslvserver_sslcertkey_binding")
+        _log_api_payload "sslvserver_sslcertkey_binding (BIND $_vserver / $_target_server_certkey)" "$_payload_bind" "$_res_bind"
+        if _check_api_response "$_res_bind" "Bind $_target_server_certkey to $_vserver"; then
+          _config_changed=true
+        else
+          _ns_error "Failed to bind [$_target_server_certkey] to VServer [$_vserver]: $_res_bind"
+        fi
+      done <<< "$_vservers"
+    done <<< "$(echo "$_ns_all_certs" | sed -E 's/\},[[:space:]]*\{/}\n{/g')"
+  }
+
   # --- Step 5: Get existing NetScaler certificate list ---
   _ns_all_certs=$(curl -s -k --connect-timeout 10 -w "\n%{http_code}" -X GET \
     -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
@@ -458,7 +574,7 @@ EOF
     _ns_info "Using bundle deployment method."
 
     # --- Step 6A-1: Process server certificate bundle ---
-    _r_cert_file="${CERT_NAME}_fullchain_${_date_suffix}_${_srv_serial:0:3}.cer"
+    _r_cert_file="${CERT_NAME}_fullchain_${_date_suffix}_${_srv_serial: -3}.cer"
     _process_server_cert "$CERT_FULLCHAIN_PATH" "$_r_cert_file" "true"
     # CA and Link steps are skipped in this flow.
 
@@ -480,7 +596,7 @@ EOF
       _l_serial=$(openssl x509 -in "$_l_path" -noout -serial | cut -d'=' -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')
       _ca_cn=$(openssl x509 -in "$_l_path" -noout -subject | sed -n 's/.*CN *= *//p' | cut -d'/' -f1 | tr -d '*' | tr ' ' '_')
       _base_ca_name="CA_${_ca_cn}"
-      _r_ca_file="${_base_ca_name}_${_date_suffix}_${_l_serial:0:3}.cer"
+      _r_ca_file="${_base_ca_name}_${_date_suffix}_${_l_serial: -3}.cer"
       _resolved_ca_certname=""
 
       # Use more precise grep syntax to find serial, and handle JSON arrays (with optional spaces between objects)
@@ -505,7 +621,7 @@ EOF
             -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
             "https://${NS_IP}/nitro/v1/config/sslcertkey/${_ca_keyname}")
           if [ "$_check_name_code2" == "200" ]; then
-            _ca_keyname="${_base_ca_name}_${_date_suffix}_${_l_serial:0:3}"
+            _ca_keyname="${_base_ca_name}_${_date_suffix}_${_l_serial: -3}"
           fi
           _ns_info "CA object name conflict, renamed to [$_ca_keyname]"
         fi
@@ -536,11 +652,11 @@ EOF
     fi
 
     # --- Step 6B-2: Process server certificate ---
-    _r_cert_file="${CERT_NAME}_${_date_suffix}_${_srv_serial:0:3}.cer"
+    _r_cert_file="${CERT_NAME}_${_date_suffix}_${_srv_serial: -3}.cer"
     _process_server_cert "$CERT_PATH" "$_r_cert_file" "false"
 
     # --- Step 6B-3: Verify and link certificate chain ---
-    _ensure_cert_link "$CERT_NAME" "${_ca_certnames[0]}"
+    _ensure_cert_link "$_target_server_certkey" "${_ca_certnames[0]}"
     if [ ${#_ca_certnames[@]} -gt 1 ]; then
       _idx=0
       while [ $_idx -lt $(( ${#_ca_certnames[@]} - 1 )) ]; do
@@ -548,6 +664,11 @@ EOF
         _idx=$((_idx + 1))
       done
     fi
+  fi
+
+  # --- Step 6C: Switch VServer bindings when NS_INSTALL_NEW_CERT=1 ---
+  if [ "$NS_INSTALL_NEW_CERT" = "1" ]; then
+    _switch_vserver_bindings
   fi
 
   # --- Step 7: Save NetScaler configuration ---
@@ -560,6 +681,7 @@ EOF
       _savedeployconf USE_FULLCHAIN "$USE_FULLCHAIN"
       _savedeployconf NS_API_LOG "$NS_API_LOG"
       _savedeployconf NS_DEL_OLD_CERTKEY "$NS_DEL_OLD_CERTKEY"
+      _savedeployconf NS_INSTALL_NEW_CERT "$NS_INSTALL_NEW_CERT"
     fi
     _ns_info "Saving NetScaler configuration..."
     _payload_save='{"nsconfig":{}}'

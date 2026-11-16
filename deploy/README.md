@@ -33,7 +33,8 @@
 | `NS_PASS` | (無) | 管理者密碼 (必填，可自環境變數或 `.env` 載入) |
 | `USE_FULLCHAIN` | `0` | 是否使用 Fullchain 部署 (`1`=開啟, `0`=關閉) |
 | `NS_API_LOG` | `0` | 是否開啟 API 詳細日誌 (`1`=開啟)，日誌路徑 `./ns_api.log` |
-| `NS_DEL_OLD_CERTKEY` | `0` | 是否在更新時刪除舊的檔案 (`1`=開啟, `0`=關閉) |
+| `NS_DEL_OLD_CERTKEY` | `0` | 是否在更新時刪除舊的檔案 (`1`=開啟, `0`=關閉；`NS_INSTALL_NEW_CERT=1` 時會忽略此設定以保留回滾) |
+| `NS_INSTALL_NEW_CERT` | `0` | 部署模式 (`0`=Update 原物件, `1`=Install 新建含日期的憑證物件並自動切換 VServer 綁定) |
 | `CERT_KEY_PASS` | (空) | 若私鑰有加密，需在此提供密碼 |
 
 ## 使用範例
@@ -110,6 +111,12 @@ acme.sh --deploy -d example.com --deploy-hook netscaler
           * **尚未連結**：發送 `POST /nitro/v1/config/sslcertkey?action=link` 建立連結。
           * **已連結至其他舊 CA**：先發送 `POST /nitro/v1/config/sslcertkey?action=unlink` 解除舊連結，再重新 `action=link` 綁定至新目標 CA。
 
+   * **VServer 綁定切換（僅當 `NS_INSTALL_NEW_CERT=1` 時執行）**：
+     1. 建立新的含日期憑證物件（`${CERT_NAME}_${YYYYMMDD}`，同日衝突時加上序號末 3 碼）並完成 CA Link（標準模式）或 Bundle（Fullchain 模式）。
+     2. 比對 NetScaler 上所有非 CA 的 Server 憑證，找出 Subject CN 與新憑證完全相同的舊憑證物件。
+     3. 透過 `sslcertkey_sslvserver_binding` 與 `sslvserver_sslcertkey_binding` 查詢舊憑證綁定的 VServer 及是否帶有 `snicert`。
+     4. 依序對每個 VServer 執行 `DELETE` Unbind 舊憑證（SNI 憑證會帶入 `,snicert:true`），再 `POST` Bind 新憑證並保留原 `snicert` 設定，同時保留舊憑證物件與檔案供回滾使用。
+
 6. **儲存配置 (Save Config)**：
    * 若整個流程中有任何新增、更新或連結動作（`_config_changed=true`），發送 `POST /nitro/v1/config/nsconfig?action=save` 儲存 NetScaler 配置（等同於執行 `save ns config`）。
 
@@ -128,7 +135,7 @@ acme.sh --deploy -d example.com --deploy-hook netscaler
 * **名稱來源**：
   * 若有手動指定環境變數 `CERT_NAME`，則優先使用該名稱。
   * 若未指定，將使用 `openssl x509` 解析憑證的 `CN`（Common Name）並**自動過濾星號（`*`）**。例如，萬用字元憑證 `*.example.com` 會自動轉換為 `example.com`。
-* **檔案命名規則**（加入 `YYYYMMDD` 日期與序號前 3 碼 `${SERIAL_3}` 後綴防同日重複衝突）：
+* **檔案命名規則**（加入 `YYYYMMDD` 日期與序號末 3 碼 `${SERIAL_3}` 後綴防同日重複衝突）：
   * **標準模式憑證檔**：`${CERT_NAME}_${YYYYMMDD}_${SERIAL_3}.cer`
   * **合併模式憑證檔 (Fullchain)**：`${CERT_NAME}_fullchain_${YYYYMMDD}_${SERIAL_3}.cer`
   * **私鑰檔案**：`${CERT_NAME}_${YYYYMMDD}_${SERIAL_3}.key`
@@ -138,7 +145,7 @@ acme.sh --deploy -d example.com --deploy-hook netscaler
   * 基本格式為 `CA_${CA_CN}`，其中 `${CA_CN}` 是中繼憑證的 Common Name，並將**所有空白字元替換為底線 `_`**（例如 `Let's Encrypt Authority X3` 會轉換為 `CA_Let's_Encrypt_Authority_X3`）。
 * **衝突命名機制**：
   * 在新增 CA 物件前，腳本會先向 NetScaler 檢查該基本名稱是否已被使用。
-  * 若已存在同名物件且序列號不一致，將自動加上日期後綴命名為：`CA_${CA_CN}_${YYYYMMDD}`；若同日再次衝突，則再附加序號前 3 碼命名為 `CA_${CA_CN}_${YYYYMMDD}_${SERIAL_3}`。
+  * 若已存在同名物件且序列號不一致，將自動加上日期後綴命名為：`CA_${CA_CN}_${YYYYMMDD}`；若同日再次衝突，則再附加序號末 3 碼命名為 `CA_${CA_CN}_${YYYYMMDD}_${SERIAL_3}`。
 * **檔案命名規則**：
   * CA 憑證檔：`CA_${CA_CN}_${YYYYMMDD}_${SERIAL_3}.cer`
 
