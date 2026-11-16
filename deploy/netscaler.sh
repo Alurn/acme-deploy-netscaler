@@ -280,14 +280,13 @@ EOF
     local _old_key_filename=""
 
     if [ "$_is_bundle" = "true" ]; then
-      _bundle_param=',"bundle":"yes"'
       _ns_info "Processing Server certificate bundle ($CERT_NAME)"
     else
       _ns_info "Processing Server certificate ($CERT_NAME)"
     fi
 
     _l_server_serial=$(openssl x509 -in "$_local_cert_path" -noout -serial | cut -d'=' -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')
-    _r_key_file="${CERT_NAME}_${_date_suffix}_${_l_server_serial:0:8}.key"
+    _r_key_file="${CERT_NAME}_${_date_suffix}_${_l_server_serial:0:3}.key"
 
     if echo "$_ns_all_certs" | grep -qi "\"serial\": *\"${_l_server_serial}\""; then
       _ns_info "Server certificate serial matches, skipping upload."
@@ -320,6 +319,7 @@ EOF
         _action="?action=update"
       else
         if [ "$_is_bundle" = "true" ]; then
+          _bundle_param=',"bundle":"yes"'
           _ns_info "Executing Add Server certificate bundle (POST)..."
         else
           _ns_info "Executing Add Server certificate (POST)..."
@@ -458,7 +458,7 @@ EOF
     _ns_info "Using bundle deployment method."
 
     # --- Step 6A-1: Process server certificate bundle ---
-    _r_cert_file="${CERT_NAME}_fullchain_${_date_suffix}_${_srv_serial:0:8}.cer"
+    _r_cert_file="${CERT_NAME}_fullchain_${_date_suffix}_${_srv_serial:0:3}.cer"
     _process_server_cert "$CERT_FULLCHAIN_PATH" "$_r_cert_file" "true"
     # CA and Link steps are skipped in this flow.
 
@@ -480,7 +480,7 @@ EOF
       _l_serial=$(openssl x509 -in "$_l_path" -noout -serial | cut -d'=' -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')
       _ca_cn=$(openssl x509 -in "$_l_path" -noout -subject | sed -n 's/.*CN *= *//p' | cut -d'/' -f1 | tr -d '*' | tr ' ' '_')
       _base_ca_name="CA_${_ca_cn}"
-      _r_ca_file="${_base_ca_name}_${_date_suffix}_${_l_serial:0:8}.cer"
+      _r_ca_file="${_base_ca_name}_${_date_suffix}_${_l_serial:0:3}.cer"
       _resolved_ca_certname=""
 
       # Use more precise grep syntax to find serial, and handle JSON arrays (with optional spaces between objects)
@@ -505,7 +505,7 @@ EOF
             -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
             "https://${NS_IP}/nitro/v1/config/sslcertkey/${_ca_keyname}")
           if [ "$_check_name_code2" == "200" ]; then
-            _ca_keyname="${_base_ca_name}_${_date_suffix}_${_l_serial:0:8}"
+            _ca_keyname="${_base_ca_name}_${_date_suffix}_${_l_serial:0:3}"
           fi
           _ns_info "CA object name conflict, renamed to [$_ca_keyname]"
         fi
@@ -536,7 +536,7 @@ EOF
     fi
 
     # --- Step 6B-2: Process server certificate ---
-    _r_cert_file="${CERT_NAME}_${_date_suffix}_${_srv_serial:0:8}.cer"
+    _r_cert_file="${CERT_NAME}_${_date_suffix}_${_srv_serial:0:3}.cer"
     _process_server_cert "$CERT_PATH" "$_r_cert_file" "false"
 
     # --- Step 6B-3: Verify and link certificate chain ---
