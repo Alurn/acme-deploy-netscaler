@@ -224,10 +224,8 @@ netscaler_deploy() {
   _check_ns_version_and_set_param
 
   # Status recording variables
-  _needs_link_cert=false
-  _ca_added=false
   _config_changed=false
-  _target_ca_certname=""
+  _ca_certnames=()
 
   # --- Function: API file upload ---
   _upload_to_ns() {
@@ -289,9 +287,9 @@ EOF
     fi
 
     _l_server_serial=$(openssl x509 -in "$_local_cert_path" -noout -serial | cut -d'=' -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')
-    _r_key_file="${CERT_NAME}_${_date_suffix}.key"
+    _r_key_file="${CERT_NAME}_${_date_suffix}_${_l_server_serial:0:8}.key"
 
-    if echo "$_ns_all_certs" | grep -qi "$_l_server_serial"; then
+    if echo "$_ns_all_certs" | grep -qi "\"serial\": *\"${_l_server_serial}\""; then
       _ns_info "Server certificate serial matches, skipping upload."
     else
       _upload_to_ns "$_local_cert_path" "$_remote_cert_filename"
@@ -320,9 +318,6 @@ EOF
           _ns_info "Executing Update Server certificate (POST with action=update)..."
         fi
         _action="?action=update"
-        if [ "$_is_bundle" = "false" ]; then
-          _needs_link_cert=false
-        fi
       else
         if [ "$_is_bundle" = "true" ]; then
           _ns_info "Executing Add Server certificate bundle (POST)..."
@@ -330,9 +325,6 @@ EOF
           _ns_info "Executing Add Server certificate (POST)..."
         fi
         _action=""
-        if [ "$_is_bundle" = "false" ]; then
-          _needs_link_cert=true
-        fi
       fi
 
       local _certkey_pass_param=""
@@ -388,6 +380,68 @@ EOF
     fi
   }
 
+  # --- Function: Query current linkcertkeyname of a certificate ---
+  _get_linked_ca() {
+    local _certkey=$1
+    local _res
+    _res=$(curl -s -k --connect-timeout 10 -X GET \
+      -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
+      "https://${NS_IP}/nitro/v1/config/sslcertkey/${_certkey}")
+    _log_api_payload "sslcertkey (GET $_certkey)" "GET" "$_res"
+    echo "$_res" | grep -oP '"linkcertkeyname":\s*"\K[^"]+' | head -n 1
+  }
+
+  # --- Function: Ensure certificate is linked to expected parent CA (unlink if mismatched) ---
+  _ensure_cert_link() {
+    local _child=$1
+    local _expected_parent=$2
+    [ -z "$_child" ] || [ -z "$_expected_parent" ] && return 0
+
+    if [ "$_child" = "$_expected_parent" ]; then
+      return 0
+    fi
+
+    local _current_parent
+    _current_parent=$(_get_linked_ca "$_child")
+
+    if [ "$_current_parent" = "$_expected_parent" ]; then
+      _ns_info "Certificate [$_child] is already linked to [$_expected_parent], skipping link."
+      return 0
+    fi
+
+    if [ -n "$_current_parent" ]; then
+      _ns_info "Certificate [$_child] is currently linked to [$_current_parent], unlinking before re-linking to [$_expected_parent]..."
+      local _payload_unlink="{ \"sslcertkey\": { \"certkey\": \"${_child}\" } }"
+      local _res_unlink
+      _res_unlink=$(curl -s -k --connect-timeout 10 -w "\n%{http_code}" -X POST -H "Content-Type: application/json" \
+        -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
+        -d "$_payload_unlink" \
+        "https://${NS_IP}/nitro/v1/config/sslcertkey?action=unlink")
+
+      _log_api_payload "sslcertkey?action=unlink ($_child)" "$_payload_unlink" "$_res_unlink"
+      if _check_api_response "$_res_unlink" "Certificate Unlink ($_child)"; then
+        _config_changed=true
+      else
+        _ns_error "Unlink failed for $_child: $_res_unlink"
+      fi
+    fi
+
+    _ns_info "Linking certificate ($_child -> $_expected_parent)..."
+    local _payload_link="{ \"sslcertkey\": { \"certkey\": \"${_child}\", \"linkcertkeyname\": \"$_expected_parent\" } }"
+    local _res_link
+    _res_link=$(curl -s -k --connect-timeout 10 -w "\n%{http_code}" -X POST -H "Content-Type: application/json" \
+      -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
+      -d "$_payload_link" \
+      "https://${NS_IP}/nitro/v1/config/sslcertkey?action=link")
+
+    _log_api_payload "sslcertkey?action=link ($_child -> $_expected_parent)" "$_payload_link" "$_res_link"
+    if _check_api_response "$_res_link" "Certificate Link ($_child -> $_expected_parent)"; then
+      _config_changed=true
+    else
+      _ns_warn "Link failed ($_child -> $_expected_parent): $_res_link"
+    fi
+  }
+
   # --- Step 5: Get existing NetScaler certificate list ---
   _ns_all_certs=$(curl -s -k --connect-timeout 10 -w "\n%{http_code}" -X GET \
     -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
@@ -398,12 +452,13 @@ EOF
   fi
 
   # --- Step 6: Choose deployment path (Fullchain or Standard) ---
+  _srv_serial=$(openssl x509 -in "$CERT_PATH" -noout -serial | cut -d'=' -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')
   if [ "$USE_FULLCHAIN" = "1" ] && [ -n "$CERT_FULLCHAIN_PATH" ] && [ -f "$CERT_FULLCHAIN_PATH" ]; then
     # --- Path A: Fullchain (Bundle) deployment ---
     _ns_info "Using bundle deployment method."
 
     # --- Step 6A-1: Process server certificate bundle ---
-    _r_cert_file="${CERT_NAME}_fullchain_${_date_suffix}.cer"
+    _r_cert_file="${CERT_NAME}_fullchain_${_date_suffix}_${_srv_serial:0:8}.cer"
     _process_server_cert "$CERT_FULLCHAIN_PATH" "$_r_cert_file" "true"
     # CA and Link steps are skipped in this flow.
 
@@ -411,74 +466,87 @@ EOF
     # --- Path B: Standard (Separate) deployment ---
     _ns_info "Using standard separate cert/ca deployment method."
     
-    # --- Step 6B-1: Process CA intermediate certificate ---
-    _l_path="$CA_CERT_PATH"
-    _l_serial=$(openssl x509 -in "$_l_path" -noout -serial | cut -d'=' -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')
-    _ca_cn=$(openssl x509 -in "$_l_path" -noout -subject | sed -n 's/.*CN = //p' | cut -d'/' -f1 | tr -d '*' | tr ' ' '_')
-    _base_ca_name="CA_${_ca_cn}"
-    _r_ca_file="${_base_ca_name}_${_date_suffix}.cer"
+    # --- Step 6B-1: Process CA intermediate certificates (split & check each) ---
+    _ca_split_dir="$_tmp_dir/ca_split"
+    mkdir -p "$_ca_split_dir"
+    awk -v outdir="$_ca_split_dir" '
+      /-----BEGIN CERTIFICATE-----/ { in_cert=1; idx++; fname=sprintf("%s/ca_%03d.pem", outdir, idx) }
+      in_cert { print > fname }
+      /-----END CERTIFICATE-----/ { close(fname); in_cert=0 }
+    ' "$CA_CERT_PATH"
 
-    # Use more precise grep syntax to find serial, and handle JSON arrays
-    if echo "$_ns_all_certs" | grep -qi "\"serial\": *\"$_l_serial\""; then
-      _ns_info "CA [$_base_ca_name] serial matches, skipping upload."
-      # Extract certkey name from JSON object containing serial, ensuring only the first result is taken
-      _target_ca_certname=$(echo "$_ns_all_certs" | sed 's/},{/}\n{/g' | grep -i "\"serial\": *\"$_l_serial\"" | sed -n 's/.*"certkey": *"\([^"]*\)".*/\1/p' | head -n 1)
-      _ns_info "Found existing CA object name: [$_target_ca_certname]"
-    else
-      # CA does not exist, so we need to upload and create it
-      _upload_to_ns "$_l_path" "$_r_ca_file"
+    for _l_path in "$_ca_split_dir"/ca_*.pem; do
+      [ -f "$_l_path" ] || continue
+      _l_serial=$(openssl x509 -in "$_l_path" -noout -serial | cut -d'=' -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')
+      _ca_cn=$(openssl x509 -in "$_l_path" -noout -subject | sed -n 's/.*CN *= *//p' | cut -d'/' -f1 | tr -d '*' | tr ' ' '_')
+      _base_ca_name="CA_${_ca_cn}"
+      _r_ca_file="${_base_ca_name}_${_date_suffix}_${_l_serial:0:8}.cer"
+      _resolved_ca_certname=""
 
-      _ca_keyname="$_base_ca_name"
-      # Check for name conflict
-      _check_name_code=$(curl -s -k --connect-timeout 10 -o /dev/null -w "%{http_code}" \
-        -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
-        "https://${NS_IP}/nitro/v1/config/sslcertkey/${_ca_keyname}")
-
-      if [ "$_check_name_code" == "200" ]; then
-        _ca_keyname="${_base_ca_name}_${_date_suffix}"
-        _ns_info "CA object name conflict, renamed to [$_ca_keyname]"
-      fi
-
-      _payload_ca="{ \"sslcertkey\": { \"certkey\": \"$_ca_keyname\", \"cert\": \"$_r_ca_file\"$_delete_certfile_param } }"
-      _res_ca=$(curl -s -k --connect-timeout 10 -w "\n%{http_code}" -X POST -H "Content-Type: application/json" \
-        -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
-        -d "$_payload_ca" \
-        "https://${NS_IP}/nitro/v1/config/sslcertkey")
-
-      _log_api_payload "Add CA ($_ca_keyname)" "$_payload_ca" "$_res_ca"
-
-      if _check_api_response "$_res_ca" "Add CA ($_ca_keyname)"; then
-        _ca_added=true
-        _config_changed=true
-        # The target for linking is the one we just created
-        _target_ca_certname="$_ca_keyname"
+      # Use more precise grep syntax to find serial, and handle JSON arrays (with optional spaces between objects)
+      if echo "$_ns_all_certs" | grep -qi "\"serial\": *\"${_l_serial}\""; then
+        _ns_info "CA [$_base_ca_name] (serial: $_l_serial) matches, skipping upload."
+        # Extract certkey name from JSON object containing serial, ensuring only the first result is taken
+        _resolved_ca_certname=$(echo "$_ns_all_certs" | sed -E 's/\},[[:space:]]*\{/}\n{/g' | grep -i "\"serial\": *\"${_l_serial}\"" | sed -n 's/.*"certkey": *"\([^"]*\)".*/\1/p' | head -n 1)
+        _ns_info "Found existing CA object name: [$_resolved_ca_certname]"
       else
-        _ns_error "CA Add failed: $_res_ca"
+        # CA does not exist, so we need to upload and create it
+        _upload_to_ns "$_l_path" "$_r_ca_file"
+
+        _ca_keyname="$_base_ca_name"
+        # Check for name conflict
+        _check_name_code=$(curl -s -k --connect-timeout 10 -o /dev/null -w "%{http_code}" \
+          -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
+          "https://${NS_IP}/nitro/v1/config/sslcertkey/${_ca_keyname}")
+
+        if [ "$_check_name_code" == "200" ]; then
+          _ca_keyname="${_base_ca_name}_${_date_suffix}"
+          _check_name_code2=$(curl -s -k --connect-timeout 10 -o /dev/null -w "%{http_code}" \
+            -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
+            "https://${NS_IP}/nitro/v1/config/sslcertkey/${_ca_keyname}")
+          if [ "$_check_name_code2" == "200" ]; then
+            _ca_keyname="${_base_ca_name}_${_date_suffix}_${_l_serial:0:8}"
+          fi
+          _ns_info "CA object name conflict, renamed to [$_ca_keyname]"
+        fi
+
+        _payload_ca="{ \"sslcertkey\": { \"certkey\": \"$_ca_keyname\", \"cert\": \"$_r_ca_file\"$_delete_certfile_param } }"
+        _res_ca=$(curl -s -k --connect-timeout 10 -w "\n%{http_code}" -X POST -H "Content-Type: application/json" \
+          -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
+          -d "$_payload_ca" \
+          "https://${NS_IP}/nitro/v1/config/sslcertkey")
+
+        _log_api_payload "Add CA ($_ca_keyname)" "$_payload_ca" "$_res_ca"
+
+        if _check_api_response "$_res_ca" "Add CA ($_ca_keyname)"; then
+          _config_changed=true
+          _resolved_ca_certname="$_ca_keyname"
+        else
+          _ns_error "CA Add failed: $_res_ca"
+        fi
       fi
+
+      if [ -n "$_resolved_ca_certname" ]; then
+        _ca_certnames+=("$_resolved_ca_certname")
+      fi
+    done
+
+    if [ ${#_ca_certnames[@]} -eq 0 ]; then
+      _ns_error "No valid intermediate CA certificates found in $CA_CERT_PATH."
     fi
 
     # --- Step 6B-2: Process server certificate ---
-    _r_cert_file="${CERT_NAME}_${_date_suffix}.cer"
+    _r_cert_file="${CERT_NAME}_${_date_suffix}_${_srv_serial:0:8}.cer"
     _process_server_cert "$CERT_PATH" "$_r_cert_file" "false"
 
-    # --- Step 6B-3: Link certificate chain ---
-    # Ensure variable comparison is strict, and log the result
-    if { [ "$_needs_link_cert" = "true" ] || [ "$_ca_added" = "true" ]; } && [ -n "$_target_ca_certname" ]; then
-      _ns_info "Linking certificate ($CERT_NAME -> $_target_ca_certname)..."
-      _payload_link="{ \"sslcertkey\": { \"certkey\": \"${CERT_NAME}\", \"linkcertkeyname\": \"$_target_ca_certname\" } }"
-      _res_link=$(curl -s -k --connect-timeout 10 -w "\n%{http_code}" -X POST -H "Content-Type: application/json" \
-        -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
-        -d "$_payload_link" \
-        "https://${NS_IP}/nitro/v1/config/sslcertkey?action=link")
-      
-      _log_api_payload "sslcertkey?action=link" "$_payload_link" "$_res_link"
-      if _check_api_response "$_res_link" "Certificate Link"; then
-        _config_changed=true
-      else
-        _ns_info "Link failed: $_res_link"
-      fi
-    else
-      _ns_info "Skipping Link action (Cert Added: $_needs_link_cert, CA Added: $_ca_added)"
+    # --- Step 6B-3: Verify and link certificate chain ---
+    _ensure_cert_link "$CERT_NAME" "${_ca_certnames[0]}"
+    if [ ${#_ca_certnames[@]} -gt 1 ]; then
+      _idx=0
+      while [ $_idx -lt $(( ${#_ca_certnames[@]} - 1 )) ]; do
+        _ensure_cert_link "${_ca_certnames[$_idx]}" "${_ca_certnames[$((_idx + 1))]}"
+        _idx=$((_idx + 1))
+      done
     fi
   fi
 
