@@ -16,7 +16,7 @@
 
 - **acme.sh**: 必須已安裝並能成功簽發憑證。
 - **NetScaler 帳號權限**: 需有足夠權限執行 `add ssl certKey`, `link ssl certKey`, `save ns config` 等操作。
-- **工具**: 執行環境需有 `curl`, `openssl`, `grep`, `sed`。
+- **工具**: 執行環境需有 `curl`, `openssl`, `awk`, `grep`, `sed`。
 
 ## 安裝與設定
 
@@ -84,28 +84,31 @@ acme.sh --deploy -d example.com --deploy-hook netscaler
       3. 透過 `GET` 檢查 NetScaler 是否已存在 `CERT_NAME` 物件。
          * **已存在 (Update 流程)**：設定 API 動作為 `?action=update`，並可選提取舊檔名（若開啟 `NS_DEL_OLD_CERTKEY`）。
          * **不存在 (Add 流程)**：設定 API 動作為空（新增）。
-      4. 執行憑證綁定（`POST /nitro/v1/config/sslcertkey`），Payload 中加入 `"bundle":"yes"` 參數，由 NetScaler 自動識別憑證鏈。
+      4. 執行憑證新增或更新（`POST /nitro/v1/config/sslcertkey`）。僅在**新增 (Add)** 時於 Payload 中加入 `"bundle":"yes"` 參數，由 NetScaler 自動識別憑證鏈（`?action=update` 依據 Nitro API 規範不帶 `bundle` 參數）。
       5. 操作成功後，若有舊憑證且開啟 `NS_DEL_OLD_CERTKEY`，則會刪除快閃記憶體中舊有的檔案。
 
    * **路徑 B：標準獨立部署 (伺服器憑證與中繼 CA 分離)**
-     1. **處理中繼 CA 憑證**：
-        * 使用 `openssl` 提取本地中繼憑證的序列號（Serial），並比對 NetScaler 上已存在的憑證清單。
-        * **已存在相同序列號**：直接跳過上傳，自動匹配現有的 CA 物件名稱，並存為 `_target_ca_certname`。
+     1. **處理中繼 CA 憑證 (支援多張中繼憑證)**：
+        * 使用 `awk` 將 `CA_CERT_PATH` 拆分為獨立的中繼憑證檔案（`ca_001.pem`, `ca_002.pem` ...），並依憑證鏈順序逐張使用 `openssl` 提取序列號（Serial），比對 NetScaler 上已存在的憑證清單。
+        * **已存在相同序列號**：跳過上傳，從現有清單中匹配對應的 CA 物件名稱並依序記錄於憑證鏈陣列。
         * **不存在相同序列號**：
-          * 上傳中繼憑證至設備。
-          * 檢測 `sslcertkey` 物件名稱是否衝突，若衝突自動加上日期後綴命名。
-          * 新增中繼憑證物件（`POST /nitro/v1/config/sslcertkey`），並將 `_target_ca_certname` 指向該物件。
+          * 上傳該張中繼憑證至設備。
+          * 檢測 `sslcertkey` 物件名稱是否衝突，若衝突依序自動加上日期後綴或序號後綴命名。
+          * 新增中繼憑證物件（`POST /nitro/v1/config/sslcertkey`），並記錄該物件名稱於憑證鏈陣列。
      2. **處理伺服器憑證**：
         * 讀取本地伺服器憑證序列號，若與 NetScaler 現有證書序列號一致，則**跳過上傳與設定流程**。
         * 若序號不一致：
           * 上傳新憑證 (.cer) 與私鑰 (.key) 檔案。
           * 檢測是否已存在 `sslcertkey` 物件：
             * **已存在 (Update)**：發送 `POST /sslcertkey?action=update` 進行更新；若有開啟 `NS_DEL_OLD_CERTKEY` 則取得舊檔案名稱備用。
-            * **不存在 (Add)**：發送 `POST /sslcertkey` 新增物件，並標記需要進行證書連結 (`_needs_link_cert=true`)。
+            * **不存在 (Add)**：發送 `POST /sslcertkey` 新增物件。
           * 若私鑰已被加密，將自動檢查並附帶 `passplain` 解密密碼。
           * 更新/新增成功後，若有舊憑證且 `NS_DEL_OLD_CERTKEY=1`，刪除 NetScaler 上舊的無用實體檔案。
-     3. **連結中繼憑證 (Link)**：
-        * 當有新建立憑證物件或新增 CA 時，發送 `POST /nitro/v1/config/sslcertkey?action=link`，將伺服器憑證連結至 `_target_ca_certname`（中繼 CA 物件），建立完整鏈路。
+     3. **驗證並連結中繼憑證鏈 (Verify & Link)**：
+        * 依序檢查整條憑證鏈的每一層關係（`CERT_NAME -> CA_1 -> CA_2 ...`），透過 `GET /nitro/v1/config/sslcertkey/<certkey>` 動態查詢目前的 `linkcertkeyname`：
+          * **已連結至目標 CA**：跳過不處理。
+          * **尚未連結**：發送 `POST /nitro/v1/config/sslcertkey?action=link` 建立連結。
+          * **已連結至其他舊 CA**：先發送 `POST /nitro/v1/config/sslcertkey?action=unlink` 解除舊連結，再重新 `action=link` 綁定至新目標 CA。
 
 6. **儲存配置 (Save Config)**：
    * 若整個流程中有任何新增、更新或連結動作（`_config_changed=true`），發送 `POST /nitro/v1/config/nsconfig?action=save` 儲存 NetScaler 配置（等同於執行 `save ns config`）。
@@ -125,19 +128,19 @@ acme.sh --deploy -d example.com --deploy-hook netscaler
 * **名稱來源**：
   * 若有手動指定環境變數 `CERT_NAME`，則優先使用該名稱。
   * 若未指定，將使用 `openssl x509` 解析憑證的 `CN`（Common Name）並**自動過濾星號（`*`）**。例如，萬用字元憑證 `*.example.com` 會自動轉換為 `example.com`。
-* **檔案命名規則**（加入 `YYYYMMDD` 日期後綴防重複）：
-  * **標準模式憑證檔**：`${CERT_NAME}_${YYYYMMDD}.cer`
-  * **合併模式憑證檔 (Fullchain)**：`${CERT_NAME}_fullchain_${YYYYMMDD}.cer`
-  * **私鑰檔案**：`${CERT_NAME}_${YYYYMMDD}.key`
+* **檔案命名規則**（加入 `YYYYMMDD` 日期與序號前 3 碼 `${SERIAL_3}` 後綴防同日重複衝突）：
+  * **標準模式憑證檔**：`${CERT_NAME}_${YYYYMMDD}_${SERIAL_3}.cer`
+  * **合併模式憑證檔 (Fullchain)**：`${CERT_NAME}_fullchain_${YYYYMMDD}_${SERIAL_3}.cer`
+  * **私鑰檔案**：`${CERT_NAME}_${YYYYMMDD}_${SERIAL_3}.key`
 
 ### 3. 中繼 CA 憑證物件
 * **名稱來源**：
   * 基本格式為 `CA_${CA_CN}`，其中 `${CA_CN}` 是中繼憑證的 Common Name，並將**所有空白字元替換為底線 `_`**（例如 `Let's Encrypt Authority X3` 會轉換為 `CA_Let's_Encrypt_Authority_X3`）。
 * **衝突命名機制**：
   * 在新增 CA 物件前，腳本會先向 NetScaler 檢查該基本名稱是否已被使用。
-  * 若已存在同名物件且序列號不一致，將自動加上日期後綴命名為：`CA_${CA_CN}_${YYYYMMDD}`，以避免名稱衝突。
+  * 若已存在同名物件且序列號不一致，將自動加上日期後綴命名為：`CA_${CA_CN}_${YYYYMMDD}`；若同日再次衝突，則再附加序號前 3 碼命名為 `CA_${CA_CN}_${YYYYMMDD}_${SERIAL_3}`。
 * **檔案命名規則**：
-  * CA 憑證檔：`CA_${CA_CN}_${YYYYMMDD}.cer`
+  * CA 憑證檔：`CA_${CA_CN}_${YYYYMMDD}_${SERIAL_3}.cer`
 
 
 ## 疑難排解
