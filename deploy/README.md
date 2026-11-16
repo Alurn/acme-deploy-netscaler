@@ -55,6 +55,37 @@ acme.sh --deploy -d example.com --deploy-hook netscaler
 
 ## 腳本詳細邏輯流程
 
+```mermaid
+flowchart TD
+    Start(["開始 netscaler_deploy"]) --> Init["1. 檢查環境變數與憑證路徑 / 解析 CERT_NAME"]
+    Init --> Login["2. Nitro API 登入取得 Session Token"]
+    Login --> Ver["3. 查詢版本 (nsversion >= 14.1-43 啟用 deleteCertKeyFilesOnRemoval)"]
+    Ver --> List["4. 取得 NetScaler 現有 sslcertkey 清單"]
+    List --> Mode{"5. USE_FULLCHAIN=1 且 fullchain 存在?"}
+
+    Mode -- "是 (路徑 A: Bundle)" --> SrvB["處理 Fullchain 憑證與私鑰"]
+    Mode -- "否 (路徑 B: 標準分離)" --> SplitCA["使用 awk 拆分 CA_CERT_PATH 為多張中繼憑證"]
+
+    SplitCA --> LoopCA["逐張比對 CA 序號 (存在則沿用，不存在則上傳並新增)"]
+    LoopCA --> SrvS["處理 Server 憑證與私鑰"]
+    SrvS --> LinkChain["依序驗證並自動 Unlink / Link 憑證鏈 (Server -> CA_1 -> CA_2)"]
+
+    SrvB --> InstallCheck{"6. NS_INSTALL_NEW_CERT=1?"}
+    LinkChain --> InstallCheck
+
+    InstallCheck -- "否 (Update 模式)" --> SaveCheck
+    InstallCheck -- "是 (Install 切換模式)" --> FindOld["比對同 Subject CN 的舊 Server 憑證物件"]
+    FindOld --> QueryVS["查詢舊憑證綁定的 VServer 與 snicert 狀態"]
+    QueryVS --> SwitchVS["對每個 VServer 執行 DELETE Unbind 舊憑證 -> POST Bind 新憑證 (保留原 snicert)"]
+    SwitchVS --> SaveCheck
+
+    SaveCheck{"7. 有任何設定變更?"}
+    SaveCheck -- "是" --> Save["儲存設定 (_savedeployconf & save ns config)"]
+    SaveCheck -- "否" --> Logout["8. 登出 Session 與清理暫存目錄"]
+    Save --> Logout
+    Logout --> End(["完成"])
+```
+
 本腳本透過 Citrix NetScaler Nitro API 執行憑證之部署與更新，其詳細的執行步驟與分支判斷邏輯如下：
 
 1. **初始化與環境變數檢查**：
@@ -114,8 +145,8 @@ acme.sh --deploy -d example.com --deploy-hook netscaler
    * **VServer 綁定切換（僅當 `NS_INSTALL_NEW_CERT=1` 時執行）**：
      1. 建立新的含日期憑證物件（`${CERT_NAME}_${YYYYMMDD}`，同日衝突時加上序號末 3 碼）並完成 CA Link（標準模式）或 Bundle（Fullchain 模式）。
      2. 比對 NetScaler 上所有非 CA 的 Server 憑證，找出 Subject CN 與新憑證完全相同的舊憑證物件。
-     3. 透過 `sslcertkey_sslvserver_binding` 與 `sslvserver_sslcertkey_binding` 查詢舊憑證綁定的 VServer 及是否帶有 `snicert`。
-     4. 依序對每個 VServer 執行 `DELETE` Unbind 舊憑證（SNI 憑證會帶入 `,snicert:true`），再 `POST` Bind 新憑證並保留原 `snicert` 設定，同時保留舊憑證物件與檔案供回滾使用。
+     3. 透過 `GET /nitro/v1/config/sslcertkey_sslvserver_binding/<old_certkey>` 與 `GET /nitro/v1/config/sslvserver_sslcertkey_binding/<vserver>` 查詢舊憑證綁定的 VServer 及是否帶有 `snicert`。
+     4. 依序對每個 VServer 執行 `DELETE /nitro/v1/config/sslvserver_sslcertkey_binding/<vserver>?args=certkeyname:<old_certkey>` 解除舊憑證綁定（僅解除關聯不會刪除憑證），再發送 `POST /nitro/v1/config/sslvserver_sslcertkey_binding` 綁定新憑證；僅在舊憑證原本有啟用 `snicert` 時才會帶入 `snicert:true`（原本未帶 `snicert` 則不傳送 `snicert` 參數），並保留舊憑證物件與檔案供回滾使用。
 
 6. **儲存配置 (Save Config)**：
    * 若整個流程中有任何新增、更新或連結動作（`_config_changed=true`），發送 `POST /nitro/v1/config/nsconfig?action=save` 儲存 NetScaler 配置（等同於執行 `save ns config`）。
