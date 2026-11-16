@@ -63,14 +63,29 @@ flowchart TD
     Ver --> List["4. 取得 NetScaler 現有 sslcertkey 清單"]
     List --> Mode{"5. USE_FULLCHAIN=1 且 fullchain 存在?"}
 
-    Mode -- "是 (路徑 A: Bundle)" --> SrvB["處理 Fullchain 憑證與私鑰"]
+    Mode -- "是 (路徑 A: Bundle)" --> SerialB{"Server 憑證序號已存在?"}
     Mode -- "否 (路徑 B: 標準分離)" --> SplitCA["使用 awk 拆分 CA_CERT_PATH 為多張中繼憑證"]
 
     SplitCA --> LoopCA["逐張比對 CA 序號 (存在則沿用，不存在則上傳並新增)"]
-    LoopCA --> SrvS["處理 Server 憑證與私鑰"]
-    SrvS --> LinkChain["依序驗證並自動 Unlink / Link 憑證鏈 (Server -> CA_1 -> CA_2)"]
+    LoopCA --> SerialS{"Server 憑證序號已存在?"}
 
-    SrvB --> InstallCheck{"6. NS_INSTALL_NEW_CERT=1?"}
+    SerialB -- "是" --> SkipB["跳過上傳與部署"]
+    SerialB -- "否" --> InstB{"NS_INSTALL_NEW_CERT=1?"}
+    InstB -- "是" --> AddB["上傳並以 Add 新增含日期物件 (POST /sslcertkey, bundle:yes)"]
+    InstB -- "否" --> UpdB["上傳並依現況執行 Update (?action=update) 或 Add"]
+
+    SerialS -- "是" --> SkipS["跳過上傳"]
+    SerialS -- "否" --> InstS{"NS_INSTALL_NEW_CERT=1?"}
+    InstS -- "是" --> AddS["上傳並以 Add 新增含日期物件 (POST /sslcertkey)"]
+    InstS -- "否" --> UpdS["上傳並依現況執行 Update (?action=update) 或 Add"]
+
+    SkipS --> LinkChain["依序驗證並自動 Unlink / Link 憑證鏈 (Server -> CA_1 -> CA_2)"]
+    AddS --> LinkChain
+    UpdS --> LinkChain
+
+    SkipB --> InstallCheck{"6. NS_INSTALL_NEW_CERT=1 且有新建 Server 憑證?"}
+    AddB --> InstallCheck
+    UpdB --> InstallCheck
     LinkChain --> InstallCheck
 
     InstallCheck -- "否 (Update 模式)" --> SaveCheck
@@ -113,11 +128,12 @@ flowchart TD
     * **路徑 A：合併部署 (Fullchain/Bundle)**
       1. 使用 `openssl` 讀取本地合併憑證（Fullchain）中的伺服器憑證序列號，並比對 NetScaler 上已存在的憑證清單。若已存在相同序列號，則**直接跳過上傳與部署流程**。
       2. 若序列號不匹配，則將合併後的憑證鏈（Fullchain）以 Base64 編碼，透過 `POST /nitro/v1/config/systemfile` 上傳至設備，同時上傳私鑰檔。
-      3. 透過 `GET` 檢查 NetScaler 是否已存在 `CERT_NAME` 物件。
-         * **已存在 (Update 流程)**：設定 API 動作為 `?action=update`，並可選提取舊檔名（若開啟 `NS_DEL_OLD_CERTKEY`）。
-         * **不存在 (Add 流程)**：設定 API 動作為空（新增）。
-      4. 執行憑證新增或更新（`POST /nitro/v1/config/sslcertkey`）。僅在**新增 (Add)** 時於 Payload 中加入 `"bundle":"yes"` 參數，由 NetScaler 自動識別憑證鏈（`?action=update` 依據 Nitro API 規範不帶 `bundle` 參數）。
-      5. 操作成功後，若有舊憑證且開啟 `NS_DEL_OLD_CERTKEY`，則會刪除快閃記憶體中舊有的檔案。
+      3. 依據 `NS_INSTALL_NEW_CERT` 決定新增或更新：
+         * **若 `NS_INSTALL_NEW_CERT=1` (Install 模式)**：不使用 `?action=update`，直接建立含日期的新物件名稱（`${CERT_NAME}_${YYYYMMDD}`，同日衝突時加上序號末 3 碼），走 **Add 流程**（`POST /nitro/v1/config/sslcertkey` 並帶入 `"bundle":"yes"`），且不刪除舊檔。
+         * **若 `NS_INSTALL_NEW_CERT=0` (預設 Update 模式)**：透過 `GET` 檢查 NetScaler 是否已存在 `CERT_NAME` 物件：
+           * **已存在 (Update 流程)**：設定 API 動作為 `?action=update`（依據 Nitro API 規範不帶 `bundle` 參數），並可選提取舊檔名（若開啟 `NS_DEL_OLD_CERTKEY`）。
+           * **不存在 (Add 流程)**：設定 API 動作為空，於 Payload 中加入 `"bundle":"yes"` 參數。
+      4. 操作成功後，僅在 `NS_INSTALL_NEW_CERT=0` 且 `NS_DEL_OLD_CERTKEY=1` 時，刪除快閃記憶體中舊有的檔案。
 
    * **路徑 B：標準獨立部署 (伺服器憑證與中繼 CA 分離)**
      1. **處理中繼 CA 憑證 (支援多張中繼憑證)**：
@@ -131,11 +147,13 @@ flowchart TD
         * 讀取本地伺服器憑證序列號，若與 NetScaler 現有證書序列號一致，則**跳過上傳與設定流程**。
         * 若序號不一致：
           * 上傳新憑證 (.cer) 與私鑰 (.key) 檔案。
-          * 檢測是否已存在 `sslcertkey` 物件：
-            * **已存在 (Update)**：發送 `POST /sslcertkey?action=update` 進行更新；若有開啟 `NS_DEL_OLD_CERTKEY` 則取得舊檔案名稱備用。
-            * **不存在 (Add)**：發送 `POST /sslcertkey` 新增物件。
+          * 依據 `NS_INSTALL_NEW_CERT` 決定新增或更新：
+            * **若 `NS_INSTALL_NEW_CERT=1` (Install 模式)**：不使用 `?action=update`，直接建立含日期的新物件名稱（`${CERT_NAME}_${YYYYMMDD}`，同日衝突時加上序號末 3 碼），發送 `POST /nitro/v1/config/sslcertkey`（**Add**）新增物件，且保留舊檔供回滾。
+            * **若 `NS_INSTALL_NEW_CERT=0` (預設 Update 模式)**：檢測是否已存在 `CERT_NAME` 物件：
+              * **已存在 (Update)**：發送 `POST /nitro/v1/config/sslcertkey?action=update` 進行更新；若有開啟 `NS_DEL_OLD_CERTKEY` 則取得舊檔案名稱備用。
+              * **不存在 (Add)**：發送 `POST /nitro/v1/config/sslcertkey` 新增物件。
           * 若私鑰已被加密，將自動檢查並附帶 `passplain` 解密密碼。
-          * 更新/新增成功後，若有舊憑證且 `NS_DEL_OLD_CERTKEY=1`，刪除 NetScaler 上舊的無用實體檔案。
+          * 更新/新增成功後，僅在 `NS_INSTALL_NEW_CERT=0` 且 `NS_DEL_OLD_CERTKEY=1` 時，刪除 NetScaler 上舊的無用實體檔案。
      3. **驗證並連結中繼憑證鏈 (Verify & Link)**：
         * 依序檢查整條憑證鏈的每一層關係（`CERT_NAME -> CA_1 -> CA_2 ...`），透過 `GET /nitro/v1/config/sslcertkey/<certkey>` 動態查詢目前的 `linkcertkeyname`：
           * **已連結至目標 CA**：跳過不處理。

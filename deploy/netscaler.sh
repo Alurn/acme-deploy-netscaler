@@ -227,6 +227,7 @@ netscaler_deploy() {
 
   # Status recording variables
   _config_changed=false
+  _server_cert_changed=false
   _ca_certnames=()
   _target_server_certkey="$CERT_NAME"
 
@@ -293,10 +294,6 @@ EOF
 
     if echo "$_ns_all_certs" | grep -qi "\"serial\": *\"${_l_server_serial}\""; then
       _ns_info "Server certificate serial matches, skipping upload."
-      if [ "$NS_INSTALL_NEW_CERT" = "1" ]; then
-        _target_server_certkey=$(echo "$_ns_all_certs" | sed -E 's/\},[[:space:]]*\{/}\n{/g' | grep -i "\"serial\": *\"${_l_server_serial}\"" | sed -n 's/.*"certkey": *"\([^"]*\)".*/\1/p' | head -n 1)
-        _ns_info "Using existing server certkey object: [$_target_server_certkey]"
-      fi
     else
       _upload_to_ns "$_local_cert_path" "$_remote_cert_filename"
       _upload_to_ns "$CERT_KEY_PATH" "$_r_key_file"
@@ -375,6 +372,7 @@ EOF
         _log_api_payload "$_method Server bundle ($_target_server_certkey $_action)" "$_payload_server" "$_res_server"
         if _check_api_response "$_res_server" "Server certificate bundle operation"; then
           _config_changed=true
+          _server_cert_changed=true
           # If deletion is enabled (only in Update mode) and old file differs from new file, execute deletion
           if [ "$NS_INSTALL_NEW_CERT" != "1" ] && [ "$NS_DEL_OLD_CERTKEY" = "1" ]; then
             if [ -n "$_old_cert_filename" ] && [ "$_old_cert_filename" != "$_remote_cert_filename" ]; then
@@ -391,6 +389,7 @@ EOF
         _log_api_payload "$_method Server ($_target_server_certkey $_action)" "$_payload_server" "$_res_server"
         if _check_api_response "$_res_server" "Server certificate operation"; then
           _config_changed=true
+          _server_cert_changed=true
           # If deletion is enabled (only in Update mode) and old file differs from new file, execute deletion
           if [ "$NS_INSTALL_NEW_CERT" != "1" ] && [ "$NS_DEL_OLD_CERTKEY" = "1" ]; then
             if [ -n "$_old_cert_filename" ] && [ "$_old_cert_filename" != "$_remote_cert_filename" ]; then
@@ -656,7 +655,9 @@ EOF
     _process_server_cert "$CERT_PATH" "$_r_cert_file" "false"
 
     # --- Step 6B-3: Verify and link certificate chain ---
-    _ensure_cert_link "$_target_server_certkey" "${_ca_certnames[0]}"
+    if [ "$NS_INSTALL_NEW_CERT" != "1" ] || [ "$_server_cert_changed" = "true" ]; then
+      _ensure_cert_link "$_target_server_certkey" "${_ca_certnames[0]}"
+    fi
     if [ ${#_ca_certnames[@]} -gt 1 ]; then
       _idx=0
       while [ $_idx -lt $(( ${#_ca_certnames[@]} - 1 )) ]; do
@@ -666,8 +667,8 @@ EOF
     fi
   fi
 
-  # --- Step 6C: Switch VServer bindings when NS_INSTALL_NEW_CERT=1 ---
-  if [ "$NS_INSTALL_NEW_CERT" = "1" ]; then
+  # --- Step 6C: Switch VServer bindings when NS_INSTALL_NEW_CERT=1 and a new server cert was installed ---
+  if [ "$NS_INSTALL_NEW_CERT" = "1" ] && [ "$_server_cert_changed" = "true" ]; then
     _switch_vserver_bindings
   fi
 
