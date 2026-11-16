@@ -288,7 +288,7 @@ EOF
       _ns_info "Processing Server certificate ($CERT_NAME)"
     fi
 
-    _l_server_serial=$(openssl x509 -in "$CERT_PATH" -noout -serial | cut -d'=' -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')
+    _l_server_serial=$(openssl x509 -in "$_local_cert_path" -noout -serial | cut -d'=' -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')
     _r_key_file="${CERT_NAME}_${_date_suffix}.key"
 
     if echo "$_ns_all_certs" | grep -qi "$_l_server_serial"; then
