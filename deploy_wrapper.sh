@@ -43,10 +43,8 @@ if [ -n "${RENEWED_LINEAGE-}" ]; then
 elif [ -n "${CERT_KEY-}" ] && [ -n "${CERT_FULLCHAIN-}" ]; then
     # 2. acme.sh Environment
     echo "Detected acme.sh environment."
-    CERT_KEY="${CERT_KEY}"
-    CERT_FILE="${CERT_FILE}"
-    CA_FILE="${CA_FILE}"
-    CERT_FULLCHAIN="${CERT_FULLCHAIN}"
+    CERT_FILE="${CERT_FILE:-}"
+    CA_FILE="${CA_FILE:-}"
 
 else
     # 3. Manual Fallback
@@ -100,6 +98,7 @@ export USE_FULLCHAIN=1 # 預設使用 Fullchain 合併部署模式
 export NS_DEL_OLD_CERTKEY=1 # 更新憑證時自動刪除舊憑證與私鑰檔
 
 # 載入函數庫
+# shellcheck source=deploy/netscaler.sh
 source "$SCRIPT_DIR/deploy/netscaler.sh"
 
 # 執行部署

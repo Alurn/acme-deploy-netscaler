@@ -1,5 +1,9 @@
 # NetScaler Nitro API Deploy Hook
 
+[![CI](https://github.com/Alurn/acme-deploy-netscaler/actions/workflows/ci.yml/badge.svg)](https://github.com/Alurn/acme-deploy-netscaler/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Alurn/acme-deploy-netscaler)](https://github.com/Alurn/acme-deploy-netscaler/releases)
+[![License: MIT](https://img.shields.io/github/license/Alurn/acme-deploy-netscaler)](../LICENSE)
+
 這是一個用於 `acme.sh` 的部署腳本，專門設計用來自動將 SSL 憑證部署到 Citrix NetScaler ADC (透過 Nitro API)。
 
 ## 功能特點

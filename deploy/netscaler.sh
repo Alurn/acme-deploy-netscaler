@@ -265,7 +265,8 @@ EOF
     local _fname=$1
     [ -z "$_fname" ] && return
     _ns_warn "Deleting old file: $_fname"
-    local _del_res=$(curl -s -k --connect-timeout 10 -w "\n%{http_code}" -X DELETE \
+    local _del_res
+    _del_res=$(curl -s -k --connect-timeout 10 -w "\n%{http_code}" -X DELETE \
       -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
       "https://${NS_IP}/nitro/v1/config/systemfile?args=filename:${_fname},filelocation:%2Fflash%2Fnsconfig%2Fssl%2F")
     _log_api_payload "systemfile (DELETE $_fname)" "DELETE" "$_del_res"
@@ -327,7 +328,8 @@ EOF
           # If deletion of old files is enabled, fetch current certificate info
           if [ "$NS_DEL_OLD_CERTKEY" = "1" ]; then
             _ns_info "NS_DEL_OLD_CERTKEY is enabled. Fetching current cert files for potential deletion."
-            local _current_cert_details=$(curl -s -k --connect-timeout 10 -X GET \
+            local _current_cert_details
+            _current_cert_details=$(curl -s -k --connect-timeout 10 -X GET \
                 -H "Cookie: NITRO_AUTH_TOKEN=${_session_token}" \
                 "https://${NS_IP}/nitro/v1/config/sslcertkey/${_target_server_certkey}")
             _old_cert_filename=$(echo "$_current_cert_details" | grep -oP '"cert":\s*"\K[^"]+')

@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: ShellCheck & Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          severity: warning
+
+      - name: Check Bash Syntax
+        run: |
+          bash -n deploy_wrapper.sh
+          bash -n deploy/netscaler.sh
+
+  test:
+    name: Bats Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bats
+        uses: bats-core/bats-action@2.0.0
+
+      - name: Run Bats Tests
+        run: bats tests/
