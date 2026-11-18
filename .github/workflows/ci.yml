@@ -10,10 +10,10 @@ on:
 jobs:
   lint:
     name: ShellCheck & Syntax Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Run ShellCheck
         uses: ludeeus/action-shellcheck@master
@@ -27,13 +27,15 @@ jobs:
 
   test:
     name: Bats Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Setup Bats
-        uses: bats-core/bats-action@2.0.0
+      - name: Install Bats
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bats
 
       - name: Run Bats Tests
         run: bats tests/
