@@ -43,21 +43,25 @@ done
 
 case "$url" in
   */nitro/v1/config/login)
-    printf '{"errorcode":0,"sessionid":"mock-token-123"}\n200'
+    if [ "${MOCK_LOGIN_FAIL:-0}" = "1" ]; then
+      printf '{"errorcode":1075,"message":"Invalid username or password","severity":"ERROR"}\n401'
+    else
+      printf '{"errorcode":0,"message":"Done","severity":"NONE","sessionid":"mock-token-123"}\n201'
+    fi
     ;;
   */nitro/v1/config/nsversion)
     if [ -n "${MOCK_NSVERSION_RAW:-}" ]; then
       printf '%s\n200' "${MOCK_NSVERSION_RAW}"
     else
-      printf '{"errorcode":0,"nsversion":{"version":"%s"}}\n200' "${MOCK_NS_VERSION:-NS14.1: Build 44.10.nc}"
+      printf '{"errorcode":0,"message":"Done","severity":"NONE","nsversion":{"version":"%s"}}\n200' "${MOCK_NS_VERSION:-NS14.1: Build 44.10.nc}"
     fi
     ;;
   */nitro/v1/config/sslcertkey)
     if [ "$method" = "GET" ]; then
-      printf '{"errorcode":0,"sslcertkey":%s}\n200' "${MOCK_SSL_CERTS:-[]}"
+      printf '{"errorcode":0,"message":"Done","severity":"NONE","sslcertkey":%s}\n200' "${MOCK_SSL_CERTS:-[]}"
     else
       echo "$data" >> "${MOCK_LOG_DIR}/sslcertkey_post.log"
-      printf '{"errorcode":0}\n200'
+      printf '{"errorcode":0,"message":"Done","severity":"NONE"}\n200'
     fi
     ;;
   */nitro/v1/config/sslcertkey/*)
@@ -237,4 +241,46 @@ EOF
   run netscaler_deploy
   [ "$status" -eq 1 ]
   [[ "$output" == *"Unable to get server certificate Common Name"* ]]
+}
+
+# ==============================================================================
+# NetScaler 13.1 vs 14.1 Nitro API Simulation Tests
+# ==============================================================================
+
+@test "nitro: simulates NetScaler 13.1 API full deployment flow" {
+  export MOCK_NS_VERSION="NS13.1: Build 53.24.nc"
+  export MOCK_SSL_CERTS='[{"certkey":"other.example.com","cert":"/nsconfig/ssl/other.cer","key":"/nsconfig/ssl/other.key","serial":"AABBCC","subject":"CN=other.example.com"}]'
+  # shellcheck source=deploy/netscaler.sh
+  source "${REPO_ROOT}/deploy/netscaler.sh"
+
+  run netscaler_deploy
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Login successful, Session ID obtained."* ]]
+  [[ "$output" == *"Detected NetScaler version: 13.1 Build: 53.24"* ]]
+  [[ "$output" == *"Deployment process completed."* ]]
+  ! grep -q 'deleteCertKeyFilesOnRemoval' "${MOCK_LOG_DIR}/sslcertkey_post.log"
+}
+
+@test "nitro: simulates NetScaler 14.1 API full deployment flow" {
+  export MOCK_NS_VERSION="NS14.1: Build 47.46.nc"
+  export MOCK_SSL_CERTS='[{"certkey":"other.example.com","cert":"/nsconfig/ssl/other.cer","key":"/nsconfig/ssl/other.key","serial":"AABBCC","subject":"CN=other.example.com"}]'
+  # shellcheck source=deploy/netscaler.sh
+  source "${REPO_ROOT}/deploy/netscaler.sh"
+
+  run netscaler_deploy
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Login successful, Session ID obtained."* ]]
+  [[ "$output" == *"Detected NetScaler version: 14.1 Build: 47.46"* ]]
+  [[ "$output" == *"Deployment process completed."* ]]
+  grep -q '"deleteCertKeyFilesOnRemoval":"IF_EXPIRED"' "${MOCK_LOG_DIR}/sslcertkey_post.log"
+}
+
+@test "nitro: handles Nitro API authentication error (errorcode 1075 / HTTP 401)" {
+  export MOCK_LOGIN_FAIL="1"
+  # shellcheck source=deploy/netscaler.sh
+  source "${REPO_ROOT}/deploy/netscaler.sh"
+
+  run netscaler_deploy
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Login failed."* ]]
 }
